@@ -15,6 +15,7 @@ import { debounce } from '../../core/util';
 import type { Disposable, QuickPickItem, TabContent } from '../../core/types';
 import { dbCompletionSchema, dbDatabases } from '../../ipc/db';
 import { describeError } from './errors';
+import { isIdeaId } from './idea-model';
 import type { DbHub, RunTarget } from './hub';
 import { SqlRunner } from './runner';
 import { ResultsPane } from './results-pane';
@@ -148,6 +149,8 @@ export class ConsoleContent implements TabContent, RunTarget {
     hub.consoles.set(this.tabId, this);
     this.subs.push(
       ctx.bus.on('settings:changed', () => this.sync()),
+      // A restored console on an IntelliJ connection finds its connection when the list arrives.
+      hub.idea.onChange(() => this.sync()),
     );
     this.sync();
     if (spec.autoRun) void this.runScript();
@@ -214,6 +217,7 @@ export class ConsoleContent implements TabContent, RunTarget {
     return {
       connId: this.connId ?? this.spec.connId,
       idConn: this.spec.idConn ?? this.spec.connId,
+      connName: this.config()?.name ?? this.spec.connName,
       n: this.spec.n,
       text: text.length > MAX_SAVED_TEXT ? text.slice(0, MAX_SAVED_TEXT) : text,
       database: this.runner.database,
@@ -302,7 +306,7 @@ export class ConsoleContent implements TabContent, RunTarget {
     this.root.classList.toggle('is-production', !!c?.production);
     this.connBtn.replaceChildren(
       h('span', { class: 'db-dot', style: c?.color ? `background:${c.color}` : '' }),
-      h('span', { class: 'db-pick-text' }, c ? c.name : this.connId ? '(deleted connection)' : 'Choose connection'),
+      h('span', { class: 'db-pick-text' }, c ? c.name : this.connId ? (isIdeaId(this.connId) ? '(IntelliJ connection)' : '(deleted connection)') : 'Choose connection'),
     );
     if (c?.readOnly) this.connBtn.append(h('span', { class: 'db-badge' }, 'READ-ONLY'));
     this.dbBtn.replaceChildren(h('span', { class: 'db-pick-text' }, r.database ?? '(no database)'));
@@ -355,11 +359,11 @@ export class ConsoleContent implements TabContent, RunTarget {
   // --- Pickers ----------------------------------------------------------------------------------------------
 
   private pickConnection(): void {
-    const items: QuickPickItem[] = this.hub.connections().map((c) => ({
+    const items: QuickPickItem[] = this.hub.allConnections().map((c) => ({
       id: c.id,
       label: c.name,
       description: c.id === this.connId ? 'current' : `${c.user}@${c.host}:${c.port}`,
-      detail: c.production ? 'Production' : undefined,
+      detail: [c.source ? 'IntelliJ' : '', c.production ? 'Production' : ''].filter(Boolean).join(', ') || undefined,
     }));
     if (items.length === 0) {
       this.hub.ctx.ui.notify('There are no connections yet. Add one in the Database view.', { kind: 'info' });

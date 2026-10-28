@@ -10,6 +10,8 @@
 //! | `lsp_`                | `lsp.rs`      |
 //! | `md_`, `preview_`     | `preview.rs`  |
 //! | `db_`                 | `db.rs`       |
+//! | `web_`                | `web.rs`      |
+//! | `term_`               | `term.rs`     |
 //!
 //! Every feature module must export: `handler()`, `setup()`,
 //! `on_window_destroyed()` and `on_exit()`.
@@ -21,6 +23,8 @@ pub mod git;
 pub mod lsp;
 pub mod preview;
 pub mod search;
+pub mod term;
+pub mod web;
 
 use tauri::ipc::Invoke;
 use tauri::{App, AppHandle, Wry};
@@ -36,6 +40,8 @@ pub struct Handlers {
     lsp: Handler,
     preview: Handler,
     db: Handler,
+    web: Handler,
+    term: Handler,
 }
 
 impl Handlers {
@@ -48,6 +54,8 @@ impl Handlers {
             lsp: lsp::handler(),
             preview: preview::handler(),
             db: db::handler(),
+            web: web::handler(),
+            term: term::handler(),
         }
     }
 
@@ -62,6 +70,8 @@ impl Handlers {
             "lsp" => &self.lsp,
             "md" | "preview" => &self.preview,
             "db" => &self.db,
+            "web" => &self.web,
+            "term" => &self.term,
             _ => {
                 let msg = format!("unknown command: {name}");
                 invoke.resolver.reject(msg);
@@ -80,6 +90,8 @@ pub fn setup(app: &mut App) -> SetupResult {
     lsp::setup(app)?;
     preview::setup(app)?;
     db::setup(app)?;
+    web::setup(app)?;
+    term::setup(app)?;
     Ok(())
 }
 
@@ -90,6 +102,8 @@ pub fn on_window_destroyed(app: &AppHandle, label: &str) {
     lsp::on_window_destroyed(app, label);
     preview::on_window_destroyed(app, label);
     db::on_window_destroyed(app, label);
+    web::on_window_destroyed(app, label);
+    term::on_window_destroyed(app, label);
 }
 
 pub fn on_exit(app: &AppHandle) {
@@ -99,4 +113,6 @@ pub fn on_exit(app: &AppHandle) {
     git::on_exit(app);
     preview::on_exit(app);
     db::on_exit(app);
+    web::on_exit(app);
+    term::on_exit(app);
 }

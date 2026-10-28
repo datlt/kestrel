@@ -16,6 +16,8 @@ import { initLsp } from '../features/lsp';
 import { initPreview } from '../features/preview';
 import { initSettingsUi } from '../features/settings';
 import { initDb } from '../features/db';
+import { initWeb } from '../features/web';
+import { initTerminal } from '../features/terminal';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -82,6 +84,8 @@ export async function createWorkbench(init: WorkbenchInit): Promise<Workbench> {
     ['lsp', initLsp],
     ['settings', initSettingsUi],
     ['db', initDb],
+    ['web', initWeb],
+    ['terminal', initTerminal],
   ];
   for (const [name, fn] of features) {
     try {

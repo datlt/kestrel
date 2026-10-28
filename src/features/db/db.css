@@ -252,3 +252,11 @@ select.db-input { padding: 0 4px; }
 .db-msgs[hidden] {
   display: none;
 }
+
+/* --- IntelliJ data sources ------------------------------------------------------- */
+.db-badge-idea { color: var(--accent); border-color: var(--accent); }
+.db-tree-row.is-disabled { opacity: 0.5; }
+.db-conn-state { flex: none; font-size: 10px; color: var(--fg-faint); }
+.db-conn-state.is-connecting { color: var(--fg-muted); }
+.db-conn-state.is-connected { color: var(--success, var(--accent)); }
+.db-conn-state.is-error { color: var(--danger); }

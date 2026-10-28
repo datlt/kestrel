@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SslMode {
     Disabled,
@@ -12,7 +12,7 @@ pub enum SslMode {
     Required,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshTunnel {
     pub host: String,
@@ -24,8 +24,23 @@ pub struct SshTunnel {
     pub identity_file: Option<String>,
 }
 
+/// Says that a connection comes from an IntelliJ project (`.idea/dataSources.xml`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdeaRef {
+    /// Always "idea".
+    #[serde(default = "idea_kind")]
+    pub kind: String,
+    pub project_root: String,
+    pub uuid: String,
+}
+
+fn idea_kind() -> String {
+    "idea".into()
+}
+
 /// A saved connection. It has no password: the password comes in a separate argument.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
     pub id: String,
@@ -50,6 +65,37 @@ pub struct ConnectionConfig {
     pub init_sql: Option<String>,
     #[serde(default)]
     pub connect_timeout_sec: Option<u64>,
+    /// Set for connections that come from IntelliJ.
+    #[serde(default)]
+    pub source: Option<IdeaRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PasswordSource {
+    /// The password is in the JDBC URL or the properties of the IntelliJ file.
+    File,
+    Keychain,
+    None,
+}
+
+/// One data source of an IntelliJ project. It never holds a password.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdeaDataSource {
+    pub config: ConnectionConfig,
+    pub driver: String,
+    pub supported: bool,
+    pub reason: Option<String>,
+    pub password_source: PasswordSource,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdeaList {
+    /// Absolute path of dataSources.xml, or null when the project has none.
+    pub file: Option<String>,
+    pub sources: Vec<IdeaDataSource>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

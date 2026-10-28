@@ -12,6 +12,8 @@ export type SectionId =
   | 'lsp'
   | 'search'
   | 'database'
+  | 'terminal'
+  | 'web'
   | 'other';
 
 export interface SectionDef {
@@ -30,6 +32,8 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: 'lsp', title: 'Language Servers' },
   { id: 'search', title: 'Search' },
   { id: 'database', title: 'Database' },
+  { id: 'terminal', title: 'Terminal' },
+  { id: 'web', title: 'Web' },
 ];
 
 export const OTHER_SECTION: SectionDef = { id: 'other', title: 'Other' };
@@ -380,6 +384,63 @@ export const SETTING_DEFS: readonly SettingDef[] = [
     description: 'Show mysql, sys, information_schema and performance_schema in the Database view.',
     section: 'database',
     type: 'boolean',
+  },
+  {
+    key: 'db.idea.enabled',
+    title: 'IntelliJ Data Sources',
+    description: 'Show the data sources of .idea/dataSources.xml of the open folder in the Database view.',
+    section: 'database',
+    type: 'boolean',
+  },
+  {
+    key: 'db.idea.autoConnect',
+    title: 'Connect IntelliJ Data Sources Automatically',
+    description: 'Connect to the IntelliJ data sources when the Database view opens.',
+    section: 'database',
+    type: 'boolean',
+  },
+
+  // Terminal
+  {
+    key: 'terminal.shell',
+    title: 'Shell',
+    description: 'Program for new terminals, for example /bin/zsh. Empty: your login shell.',
+    section: 'terminal',
+    type: 'text',
+  },
+  {
+    key: 'terminal.fontSize',
+    title: 'Font Size',
+    description: 'Font size of terminals in pixels. 0 uses the editor font size.',
+    section: 'terminal',
+    type: 'number',
+    min: 0,
+    max: 48,
+  },
+  {
+    key: 'terminal.scrollback',
+    title: 'Scrollback',
+    description: 'Number of lines a terminal keeps above the screen.',
+    section: 'terminal',
+    type: 'number',
+    min: 100,
+    max: 1000000,
+  },
+  {
+    key: 'terminal.cursorBlink',
+    title: 'Blinking Cursor',
+    description: 'Let the terminal cursor blink.',
+    section: 'terminal',
+    type: 'boolean',
+  },
+
+  // Web
+  {
+    key: 'web.bookmarks',
+    title: 'Web Pages',
+    description: 'Pages that you can open as tabs inside Kestrel from the Web view. One URL per entry.',
+    section: 'web',
+    type: 'stringList',
   },
 ];
 

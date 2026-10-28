@@ -35,7 +35,7 @@ export class DdlContent implements TabContent {
         'div',
         { class: 'db-toolbar' },
         h('span', { class: 'db-ddl-title' }, `${spec.database}.${spec.name}`),
-        h('span', { class: 'db-faint' }, `${spec.kind} on ${conn?.name ?? 'a deleted connection'}`),
+        h('span', { class: 'db-faint' }, `${spec.kind} on ${conn?.name ?? (spec.connId.startsWith('idea:') ? 'an IntelliJ connection' : 'a deleted connection')}`),
         h('span', { class: 'db-spacer' }),
         this.note,
         copy,

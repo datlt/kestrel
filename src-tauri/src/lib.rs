@@ -18,7 +18,9 @@ pub fn run() {
             // Second guard after the frontend link handlers: a web view may only
             // show app pages and local previews, never a page from the internet.
             tauri::plugin::Builder::<tauri::Wry>::new("kestrel-nav-guard")
-                .on_navigation(|_webview, url| navigation_allowed(url))
+                // Web tabs (labels `web-*`, see cmd/web.rs) show real web sites, so
+                // they may go anywhere. They have no access to Kestrel commands.
+                .on_navigation(|webview, url| webview.label().starts_with("web-") || navigation_allowed(url))
                 .build(),
         )
         .plugin(

@@ -1,0 +1,296 @@
+/* Terminal panel. Colors come from the theme variables only. */
+
+.term-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* --- Tab strip --- */
+
+.term-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 6px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+.term-tabs {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.term-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.term-strip-spacer {
+  flex: 1;
+}
+
+.term-tab {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 0 6px 0 10px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.term-tab svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.term-tab:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+.term-tab.is-active {
+  color: var(--fg);
+}
+
+.term-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 1px;
+  background: var(--accent);
+}
+
+.term-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-tab-rename {
+  width: 120px;
+  height: 20px;
+  padding: 0 4px;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--focus-ring);
+  border-radius: var(--radius);
+  font: inherit;
+  outline: none;
+}
+
+.term-tab-close,
+.term-icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.term-tab-close {
+  visibility: hidden;
+}
+
+.term-tab:hover .term-tab-close,
+.term-tab.is-active .term-tab-close {
+  visibility: visible;
+}
+
+.term-tab-close:hover,
+.term-icon-btn:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+.term-tab-close svg,
+.term-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* --- Panes --- */
+
+.term-bodies {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.term-tab-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.term-tab-body[hidden] {
+  display: none;
+}
+
+.term-split {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.term-split-row {
+  flex-direction: row;
+}
+
+.term-split-column {
+  flex-direction: column;
+}
+
+.term-cell {
+  flex: 1 1 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.term-divider {
+  flex: none;
+  background: var(--border);
+  touch-action: none;
+}
+
+.term-divider-row {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.term-divider-column {
+  height: 4px;
+  cursor: row-resize;
+}
+
+.term-divider:hover,
+.term-divider.is-dragging {
+  background: var(--accent);
+}
+
+.term-pane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 0 0 8px;
+  background: var(--bg);
+}
+
+.term-screen {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.term-screen .xterm {
+  height: 100%;
+}
+
+/* The active pane has a border, but only when the tab has more than one pane. */
+.term-tab-body.has-split .term-pane.is-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--fg-faint);
+  pointer-events: none;
+}
+
+.term-root:focus-within .term-tab-body.has-split .term-pane.is-active::after {
+  border-color: var(--focus-ring);
+}
+
+/* --- Search bar --- */
+
+.term-search {
+  position: absolute;
+  top: 6px;
+  right: 18px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.term-search[hidden] {
+  display: none;
+}
+
+.term-search-input {
+  width: 160px;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  outline: none;
+}
+
+.term-search-input:focus {
+  border-color: var(--focus-ring);
+}
+
+.term-search-count {
+  min-width: 52px;
+  padding: 0 4px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* --- Empty state --- */
+
+.term-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--fg-muted);
+}
+
+.term-empty[hidden] {
+  display: none;
+}
+
+.term-empty-btn {
+  padding: 4px 12px;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font: inherit;
+}

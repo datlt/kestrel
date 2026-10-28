@@ -6,6 +6,7 @@
 //! - Passwords live in the OS keychain.
 
 mod error;
+mod idea;
 mod keychain;
 mod manager;
 mod schema;
@@ -13,6 +14,7 @@ mod tunnel;
 mod types;
 mod values;
 
+pub use idea::list as idea_list;
 pub use manager::DbManager;
 pub use types::*;
 
@@ -32,5 +34,6 @@ pub(crate) fn tunnel_test_config() -> ConnectionConfig {
         color: None,
         init_sql: None,
         connect_timeout_sec: None,
+        source: None,
     }
 }

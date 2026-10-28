@@ -17,6 +17,8 @@ import {
 } from '../../ipc/db';
 import { IpcError } from '../../ipc/invoke';
 import { describeError, isAuthError } from './errors';
+import { IdeaSources } from './idea';
+import { isIdeaId } from './idea-model';
 import { ResultsStore } from './results-store';
 
 /** What a console or a SQL file offers to the commands. */
@@ -61,6 +63,9 @@ export class MetaSession {
   private async ensure(): Promise<string> {
     if (this.sid) return this.sid;
     if (!this.opening) {
+      // An IntelliJ connection exists only after its list was read.
+      if (isIdeaId(this.connId)) await this.hub.idea.ready();
+      if (this.opening) return this.opening;
       const config = this.hub.find(this.connId);
       if (!config) throw new IpcError('not_found', 'This connection does not exist any more.', 'db_connect');
       this.opening = this.hub
@@ -133,17 +138,40 @@ export class DbHub {
   readonly panelStore = new ResultsStore();
   tree: TreeApi | null = null;
   private disposed = false;
+  /** Connections that must not ask for a password (automatic connect of IntelliJ sources). */
+  private readonly quiet = new Set<string>();
+  /** The data sources of the IntelliJ project in the open folder. */
+  readonly idea: IdeaSources;
 
-  constructor(readonly ctx: AppContext) {}
+  constructor(readonly ctx: AppContext) {
+    this.idea = new IdeaSources(ctx);
+  }
 
   // --- Connections -----------------------------------------------------------------
 
+  /** The connections saved in the settings. Only these can be edited and saved. */
   connections(): DbConnectionConfig[] {
     return this.ctx.settings.get('db.connections') ?? [];
   }
 
+  /** IntelliJ connections (supported ones, in file order) and then the saved connections. For pickers. */
+  allConnections(): DbConnectionConfig[] {
+    return [...this.idea.configs(), ...this.connections()];
+  }
+
+  /** A saved connection or an IntelliJ connection (`idea:<uuid>`) by id. */
   find(id: string): DbConnectionConfig | undefined {
+    if (isIdeaId(id)) return this.idea.find(id);
     return this.connections().find((c) => c.id === id);
+  }
+
+  /** Marks a connection as "do not ask for a password". Call `allowAsking` when the attempt ends. */
+  denyAsking(id: string): void {
+    this.quiet.add(id);
+  }
+
+  allowAsking(id: string): void {
+    this.quiet.delete(id);
   }
 
   setPassword(id: string, password: string | null): void {
@@ -173,7 +201,7 @@ export class DbHub {
         if (password !== null) this.passwords.set(config.id, password);
         return info;
       } catch (e) {
-        if (!isAuthError(e)) throw e;
+        if (!isAuthError(e) || this.quiet.has(config.id)) throw e;
         // A wrong password in the keychain must be fixed in the connection form.
         if (password === null && (await dbPasswordExists(config.id).catch(() => false))) throw e;
         this.passwords.delete(config.id);

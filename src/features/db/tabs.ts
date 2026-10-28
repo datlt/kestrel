@@ -4,6 +4,7 @@
 import type { TabInput } from '../../core/types';
 import type { DbObjectKind } from '../../ipc/db';
 import type { DbHub } from './hub';
+import { isIdeaId } from './idea-model';
 
 // --- SQL console -------------------------------------------------------------------
 
@@ -12,6 +13,8 @@ export interface ConsoleSpec {
   /** The connection of the first console tab id. The picker can change `connId` later; the tab id stays. */
   idConn?: string;
   n: number;
+  /** Name of the connection, kept so a restored tab has a title before the IntelliJ list is read. */
+  connName?: string;
   /** Text of the editor. */
   text?: string;
   database?: string | null;
@@ -26,11 +29,12 @@ export function consoleTitle(connName: string, n: number): string {
 }
 
 export function consoleTabInput(hub: DbHub, spec: ConsoleSpec): TabInput {
-  const name = hub.find(spec.connId)?.name ?? 'Console';
+  const name = hub.find(spec.connId)?.name ?? spec.connName ?? 'Console';
   // The tab keeps this spec, so a restored tab gets the text back.
   let current: () => unknown = () => ({
     connId: spec.connId,
     idConn: spec.idConn ?? spec.connId,
+    connName: spec.connName,
     n: spec.n,
     text: spec.text ?? '',
     database: spec.database ?? null,
@@ -53,10 +57,12 @@ export function consoleTabInput(hub: DbHub, spec: ConsoleSpec): TabInput {
 export function restoreConsoleTab(hub: DbHub, data: unknown): TabInput | null {
   const d = data as Partial<ConsoleSpec> | null;
   if (!d || typeof d.connId !== 'string' || typeof d.n !== 'number') return null;
-  if (!hub.find(d.connId)) return null;
+  // An IntelliJ connection is found later, when the list of the folder is read.
+  if (!hub.find(d.connId) && !isIdeaId(d.connId)) return null;
   return consoleTabInput(hub, {
     connId: d.connId,
     idConn: typeof d.idConn === 'string' ? d.idConn : d.connId,
+    connName: typeof d.connName === 'string' ? d.connName : undefined,
     n: d.n,
     text: typeof d.text === 'string' ? d.text : '',
     database: typeof d.database === 'string' ? d.database : null,

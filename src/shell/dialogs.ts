@@ -2,6 +2,7 @@
 
 import { h } from '../core/dom';
 import type { UiService } from '../core/types';
+import { overlayClosed, overlayOpened } from './overlay-count';
 
 function focusable(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>('button, input')].filter((el) => !el.hasAttribute('disabled'));
@@ -20,6 +21,7 @@ function openModal<T>(
       if (finished) return;
       finished = true;
       overlay.remove();
+      overlayClosed(layer);
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
       resolve(value);
     };
@@ -47,6 +49,7 @@ function openModal<T>(
       }
     });
     layer.append(overlay);
+    overlayOpened(layer);
     focus();
   });
 }

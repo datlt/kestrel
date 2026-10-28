@@ -34,6 +34,14 @@ export interface DbSshTunnel {
   identityFile?: string | null;
 }
 
+/** Connection read from an IntelliJ project (`<projectRoot>/.idea/dataSources.xml`). */
+export interface DbIdeaRef {
+  kind: 'idea';
+  projectRoot: string;
+  /** `uuid` attribute of the IntelliJ data source. */
+  uuid: string;
+}
+
 /** A saved connection. Stored in the setting `db.connections` (no password). */
 export interface DbConnectionConfig {
   /** Stable unique id (also the keychain account name of the password). */
@@ -56,6 +64,15 @@ export interface DbConnectionConfig {
   initSql?: string | null;
   /** Default 10 seconds. */
   connectTimeoutSec?: number | null;
+  /**
+   * Set for connections that come from IntelliJ. With `password: null`,
+   * `db_connect` and `db_test` find the password in Rust, in this order: the
+   * JDBC URL or properties in the IntelliJ files (read again at connect time),
+   * the IntelliJ keychain entry (service `IntelliJ Platform DB — <uuid>`;
+   * macOS asks the user once), the Kestrel keychain entry. The password never
+   * goes to the frontend.
+   */
+  source?: DbIdeaRef | null;
 }
 
 export interface DbSessionInfo {
@@ -204,6 +221,33 @@ export const dbDdl = (sessionId: string, database: string, name: string, kind: D
 /** Table name → column names, for SQL completion (one information_schema query). */
 export const dbCompletionSchema = (sessionId: string, database: string) =>
   invoke<Record<string, string[]>>('db_completion_schema', { sessionId, database });
+
+// --- IntelliJ data sources ------------------------------------------------
+
+export interface DbIdeaDataSource {
+  /** Ready to use: `id` is `idea:<uuid>`, `name` is the IntelliJ name, `source` is set. No password. */
+  config: DbConnectionConfig;
+  /** IntelliJ `driver-ref`, for example `mysql.8`, `mariadb`, `trino`, `postgresql`. */
+  driver: string;
+  /** Kestrel can connect (MySQL or MariaDB). */
+  supported: boolean;
+  /** Why it is not supported, for example "Trino is not supported". */
+  reason: string | null;
+  /** Where the password comes from at connect time. */
+  passwordSource: 'file' | 'keychain' | 'none';
+}
+
+export interface DbIdeaList {
+  /** Absolute path of dataSources.xml, or null when the project has none. */
+  file: string | null;
+  sources: DbIdeaDataSource[];
+}
+
+/**
+ * Reads `.idea/dataSources.xml` (+ `dataSources.local.xml` and the IntelliJ
+ * SSH configs) of a project. Never returns passwords.
+ */
+export const dbIdeaList = (projectRoot: string) => invoke<DbIdeaList>('db_idea_list', { projectRoot });
 
 // --- Passwords in the OS keychain (service `dev.kestrel.editor.db`, account = connection id)
 

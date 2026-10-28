@@ -190,6 +190,10 @@ async fn invoke(m: &DbManager, cmd: &str, a: Value) -> Result<Value> {
             out(m.ddl(OWNER, &arg::<String>(&a, "sessionId")?, &arg::<String>(&a, "database")?, &arg::<String>(&a, "name")?, kind).await?)
         }
         "db_completion_schema" => out(m.completion_schema(OWNER, &arg::<String>(&a, "sessionId")?, &arg::<String>(&a, "database")?).await?),
+        "db_idea_list" => {
+            let root: String = arg(&a, "projectRoot")?;
+            out(tokio::task::spawn_blocking(move || kestrel_db::idea_list(std::path::Path::new(&root))).await.map_err(|e| Error::internal(e.to_string()))??)
+        }
         "db_password_set" => out(m.password_set(&arg::<String>(&a, "id")?, &arg::<String>(&a, "password")?).await?),
         "db_password_delete" => out(m.password_delete(&arg::<String>(&a, "id")?).await?),
         "db_password_exists" => out(m.password_exists(&arg::<String>(&a, "id")?).await?),

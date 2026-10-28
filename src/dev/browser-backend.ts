@@ -8,7 +8,7 @@
 
 const BASE = '/__kestrel';
 const WINDOW_LABEL = 'main';
-const APP_COMMAND = /^(app|fs|ws|search|git|md|preview|lsp|db)_/;
+const APP_COMMAND = /^(app|fs|ws|search|git|md|preview|lsp|db|web|term)_/;
 /** Commands that answer with raw bytes instead of JSON. */
 const RAW_RESPONSE = new Set(['fs_read_file', 'git_show']);
 const CHANNEL_PREFIX = '__CHANNEL__:';
@@ -21,18 +21,14 @@ interface BridgeError {
   message: string;
 }
 
-/** One id per browser tab. The plugin keeps the open folder and the watcher per id. */
+/**
+ * One id per page load. A reloaded page must not reuse the old id: the plugin
+ * numbers channel messages per client, and a new page that starts again at 0
+ * would wait for message 0 forever (terminals stayed empty after a reload).
+ * The plugin forgets the old client after a short time and stops its shells.
+ */
 function clientId(): string {
-  try {
-    let id = sessionStorage.getItem('kestrel.dev.client');
-    if (!id) {
-      id = Math.random().toString(36).slice(2) + Date.now().toString(36);
-      sessionStorage.setItem('kestrel.dev.client', id);
-    }
-    return id;
-  } catch {
-    return Math.random().toString(36).slice(2);
-  }
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 export async function installBrowserBackend(): Promise<void> {

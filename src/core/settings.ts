@@ -52,6 +52,13 @@ export const DEFAULT_SETTINGS: Settings = {
   'db.maxRows': 1000,
   'db.confirmWrites': 'production',
   'db.showSystemSchemas': false,
+  'db.idea.enabled': true,
+  'db.idea.autoConnect': true,
+  'web.bookmarks': [],
+  'terminal.shell': '',
+  'terminal.fontSize': 0,
+  'terminal.scrollback': 10000,
+  'terminal.cursorBlink': true,
 };
 
 /** JSON with // and /* comments and trailing commas (like VS Code settings). */

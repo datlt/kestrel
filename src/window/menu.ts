@@ -2,6 +2,7 @@
 // window, not to a workbench, so this menu lives in document.body.
 
 import { h } from '../core/dom';
+import { overlayClosed, overlayOpened } from '../shell/overlay-count';
 
 export interface PopupItem {
   label: string;
@@ -33,6 +34,7 @@ export function showPopupMenu(x: number, y: number, items: PopupItem[], minWidth
   };
   const dispose = () => {
     menu.remove();
+    overlayClosed(document);
     window.removeEventListener('pointerdown', onOutside, true);
     window.removeEventListener('blur', dispose);
     window.removeEventListener('resize', dispose);
@@ -77,6 +79,7 @@ export function showPopupMenu(x: number, y: number, items: PopupItem[], minWidth
   closeCurrent = dispose;
   menu.style.visibility = 'hidden';
   document.body.append(menu);
+  overlayOpened(document);
   const r = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - r.width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - r.height - 4))}px`;

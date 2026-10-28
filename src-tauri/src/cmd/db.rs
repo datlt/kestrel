@@ -6,7 +6,7 @@
 use super::{Handler, SetupResult};
 use kestrel_common::Result;
 use kestrel_db::{
-    ColumnInfo, ConnectArgs, ConnectionConfig, DbManager, DbObjects, ExecResult, IndexInfo, ObjectKind, SessionInfo, TestResult, TxState,
+    ColumnInfo, ConnectArgs, ConnectionConfig, DbManager, DbObjects, ExecResult, IdeaList, IndexInfo, ObjectKind, SessionInfo, TestResult, TxState,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -92,6 +92,14 @@ async fn db_completion_schema(window: Window, db: Db<'_>, session_id: String, da
     db.completion_schema(window.label(), &session_id, &database).await
 }
 
+/// Reads the IntelliJ data sources of a project folder. The list has no passwords.
+#[tauri::command]
+async fn db_idea_list(project_root: String) -> Result<IdeaList> {
+    tauri::async_runtime::spawn_blocking(move || kestrel_db::idea_list(std::path::Path::new(&project_root)))
+        .await
+        .map_err(|e| kestrel_common::Error::internal(format!("idea list task failed: {e}")))?
+}
+
 #[tauri::command]
 async fn db_password_set(db: Db<'_>, id: String, password: String) -> Result<()> {
     db.password_set(&id, &password).await
@@ -124,6 +132,7 @@ pub fn handler() -> Handler {
         db_indexes,
         db_ddl,
         db_completion_schema,
+        db_idea_list,
         db_password_set,
         db_password_delete,
         db_password_exists,

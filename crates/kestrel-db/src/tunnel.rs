@@ -307,6 +307,7 @@ mod tests {
             color: None,
             init_sql: None,
             connect_timeout_sec: None,
+            source: None,
         }
     }
 

@@ -46,6 +46,8 @@ export class SqlFileTarget implements RunTarget {
   /** Makes sure a connection is chosen. Asks with a quick pick when there is none. */
   private async ensureConnection(): Promise<boolean> {
     const id = this.hub.fileConnection(this.editor.path);
+    // An IntelliJ connection exists only after its list was read.
+    if (id) await this.hub.idea.ready();
     if (id && this.hub.find(id)) return true;
     return this.pickConnection();
   }
@@ -54,11 +56,11 @@ export class SqlFileTarget implements RunTarget {
   pickConnection(): Promise<boolean> {
     const ctx = this.hub.ctx;
     const current = this.hub.fileConnection(this.editor.path);
-    const items: QuickPickItem[] = this.hub.connections().map((c) => ({
+    const items: QuickPickItem[] = this.hub.allConnections().map((c) => ({
       id: c.id,
       label: c.name,
       description: c.id === current ? 'current' : `${c.user}@${c.host}:${c.port}`,
-      detail: c.production ? 'Production' : undefined,
+      detail: [c.source ? 'IntelliJ' : '', c.production ? 'Production' : ''].filter(Boolean).join(', ') || undefined,
     }));
     if (items.length === 0) {
       ctx.ui.notify('There are no connections yet. Add one first.', {

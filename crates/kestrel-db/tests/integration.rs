@@ -716,6 +716,43 @@ async fn ssh_tunnel_is_shared_and_closed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// --- IntelliJ data source --------------------------------------------------------
+
+/// A made-up `.idea/dataSources.xml` points at the test server. The password is
+/// only in the URL of that file. The connect call sends `password: null`.
+#[tokio::test(flavor = "multi_thread")]
+async fn idea_source_connects_with_the_password_from_the_file() {
+    let Some(e) = env() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".idea")).unwrap();
+    let enc = |s: &str| s.bytes().map(|b| format!("%{b:02X}")).collect::<String>();
+    let url = format!("jdbc:mysql://{}:{}@{}:{}/kestrel_demo?useSSL=false", enc(&e.user), enc(&e.password), e.host, e.port);
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<project version="4"><component name="DataSourceManagerImpl" format="xml">
+<data-source source="LOCAL" name="local test" uuid="11111111-2222-3333-4444-555555555555">
+<driver-ref>mysql.8</driver-ref><jdbc-url>{url}</jdbc-url>
+</data-source></component></project>"#
+    );
+    std::fs::write(dir.path().join(".idea/dataSources.xml"), xml).unwrap();
+
+    let list = idea_list(dir.path()).unwrap();
+    assert_eq!(list.sources.len(), 1);
+    let src = &list.sources[0];
+    assert!(src.supported);
+    assert_eq!(src.config.id, "idea:11111111-2222-3333-4444-555555555555");
+    assert!(!serde_json::to_string(&list).unwrap().contains(&e.password), "the list must not hold the password");
+
+    let m = DbManager::new();
+    let args = ConnectArgs { config: src.config.clone(), password: None };
+    let t = m.test(OWNER, args.clone()).await.expect("test");
+    assert!(!t.server_version.is_empty());
+    let s = m.connect(OWNER, args).await.expect("connect");
+    assert_eq!(s.database.as_deref(), Some("kestrel_demo"));
+    assert_eq!(cell(&run(&m, &s, "SELECT 1").await, 0, 0).as_deref(), Some("1"));
+    m.close_owner(OWNER).await;
+}
+
 // --- Keychain (opt in: it can show a system prompt) --------------------------
 
 #[tokio::test(flavor = "multi_thread")]

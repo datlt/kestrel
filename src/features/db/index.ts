@@ -8,6 +8,7 @@ import { createElement, Database, Table2 } from 'lucide';
 import type { AppContext, QuickPickItem } from '../../core/types';
 import { lazyView } from '../lazy-view';
 import { DbHub } from './hub';
+import { ideaFilesChanged } from './idea-model';
 import { sqlFileExtension } from './file-ext';
 import { connTabInput, ddlTabInput, openConsole, restoreConnTab, restoreConsoleTab, restoreDdlTab } from './tabs';
 
@@ -46,12 +47,42 @@ export function initDb(ctx: AppContext): void {
   ctx.bus.on('tabs:changed', refreshStatus);
   ctx.bus.on('settings:changed', (e) => {
     if (e.settings['db.connections'] !== e.previous['db.connections']) refreshStatus();
+    if (e.settings['db.idea.enabled'] !== e.previous['db.idea.enabled']) void hub.idea.load();
   });
+
+  // --- IntelliJ data sources of the open folder -------------------------------------------
+  // Rust reads the files (no password goes to the frontend). Reload when they change.
+  let ideaTimer: ReturnType<typeof setTimeout> | null = null;
+  const reloadIdea = () => {
+    if (ideaTimer) clearTimeout(ideaTimer);
+    ideaTimer = setTimeout(() => {
+      ideaTimer = null;
+      void hub.idea.load();
+    }, 300);
+  };
+  ctx.bus.on('fs:changed', (e) => {
+    // Events of other folders (other workspace tabs) are not ours.
+    if (e.root !== ctx.workspace.root || !hub.idea.enabled()) return;
+    if (e.rescan || ideaFilesChanged(e.root, e.paths)) reloadIdea();
+  });
+  // Pickers and the status bar show IntelliJ connections once the list is read.
+  hub.idea.onChange(() => {
+    hub.refreshStatus();
+    hub.refreshFileStatus();
+  });
+  if (ctx.workspace.root) void hub.idea.ready();
   // Ask nothing here: the server rolls back open transactions when a connection closes.
-  ctx.bus.on('workbench:disposing', () => hub.disposeAll());
-  ctx.bus.on('workspace:will-change', () => hub.disposeAll());
+  ctx.bus.on('workbench:disposing', () => {
+    if (ideaTimer) clearTimeout(ideaTimer);
+    hub.disposeAll();
+  });
+  ctx.bus.on('workspace:will-change', () => {
+    hub.idea.reset();
+    hub.disposeAll();
+  });
   ctx.bus.on('workspace:changed', () => {
     hub.reopen();
+    void hub.idea.load();
     refreshStatus();
   });
 
@@ -79,7 +110,7 @@ export function initDb(ctx: AppContext): void {
   };
 
   const newConsole = (connId?: unknown) => {
-    const list = hub.connections();
+    const list = hub.allConnections();
     if (list.length === 0) {
       ctx.ui.notify('There are no connections yet.', {
         kind: 'info',
@@ -96,7 +127,7 @@ export function initDb(ctx: AppContext): void {
       openConsole(hub, { connId: pick });
       return;
     }
-    const items: QuickPickItem[] = list.map((c) => ({ id: c.id, label: c.name, description: `${c.user}@${c.host}:${c.port}`, detail: c.production ? 'Production' : undefined }));
+    const items: QuickPickItem[] = list.map((c) => ({ id: c.id, label: c.name, description: `${c.user}@${c.host}:${c.port}`, detail: [c.source ? 'IntelliJ' : '', c.production ? 'Production' : ''].filter(Boolean).join(', ') || undefined }));
     ctx.ui.quickPick({ placeholder: 'Open a SQL console on...', items, onAccept: (item) => openConsole(hub, { connId: item.id }) });
   };
 

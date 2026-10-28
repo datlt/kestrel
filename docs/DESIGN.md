@@ -664,3 +664,46 @@ password are in the script).
   never re-run a statement by itself.
 - Client statement splitter for scripts: quotes, backticks, `--`, `#` and
   `/* */` comments, `DELIMITER`. Unit tests.
+
+## 10. Round 4: IntelliJ data sources, web tabs, terminal
+
+### 10.1 Ownership
+
+| Area | Owner | Files |
+|------|-------|-------|
+| IntelliJ data sources | db-idea | `crates/kestrel-db/**`, `src-tauri/src/cmd/db.rs`, `src/features/db/**` |
+| Web tabs | web | `crates/kestrel-web/**` (if needed), `src-tauri/src/cmd/web.rs`, `src/ipc/web.ts`, `src/features/web/**`, and the `overlay:changed` emits in `src/shell/{quickpick,menu,dialogs}.ts` and `src/window/menu.ts` |
+| Terminal | terminal | `crates/kestrel-term/**`, `src-tauri/src/cmd/term.rs`, `src/ipc/term.ts`, `src/features/terminal/**`, the `term_*` section at the end of `scripts/dev-bridge.mjs` |
+| Contracts, settings, wiring | integrator | `src/ipc/db.ts`, `src/core/**`, `src/window/workbench.ts`, `src-tauri/src/lib.rs`, `cmd/mod.rs`, Cargo and npm manifests, settings schema |
+
+### 10.2 IntelliJ data sources
+
+`db_idea_list(projectRoot)` (contract in `src/ipc/db.ts`) reads
+`.idea/dataSources.xml`, `.idea/dataSources.local.xml`, `.idea/sshConfigs.xml`
+and the IntelliJ application SSH configs. The JDBC URL can hold the user and
+the password (`jdbc:mysql://user:pass@host:port/db`). Passwords stay in Rust.
+The Database view shows an "IntelliJ" group for the open folder (setting
+`db.idea.enabled`) and connects its MySQL sources when the view opens
+(`db.idea.autoConnect`). Names with `real`, `prod` or `live` count as
+production; the IntelliJ read-only flag makes the connection read-only.
+
+### 10.3 Web tabs
+
+Many web apps (mail, calendar, chat) do not allow iframes, so a web tab is a
+native child web view (`Window::add_child`, Tauri feature `unstable`) placed
+over the tab content area. It has its own label `web-<n>`, no access to
+Kestrel commands (no capability lists remote URLs), and the navigation guard
+in `lib.rs` lets `web-*` web views go anywhere. The frontend keeps the bounds
+in sync (ResizeObserver, window resize, sidebar drag), hides the web view when
+its tab, its workbench or the window is hidden, and while `overlay:changed`
+says a popup is open. Logins are stored by the system web view (WebKit on
+macOS), so the user logs in once. Chrome cookies cannot be shared.
+
+### 10.4 Terminal
+
+A PTY per session in Rust (`portable-pty`): the login shell (or
+`terminal.shell`) in the workspace root, `TERM=xterm-256color`, UTF-8 locale.
+Output goes to the frontend through a `Channel` in raw byte batches. The
+frontend uses `@xterm/xterm` (lazy chunk) in the bottom panel view
+`terminal`: several terminal tabs, and each tab can split into panes side by
+side or above each other.

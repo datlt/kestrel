@@ -1892,6 +1892,7 @@ const DB_COMMANDS = [
   'db_password_set',
   'db_password_delete',
   'db_password_exists',
+  'db_idea_list',
 ];
 
 /** Sends one command to the dev_http server. No timeout: a query can run for a long time. */
@@ -2043,3 +2044,185 @@ export default function devBridge() {
     },
   };
 }
+
+// --- term_* (owner: terminal agent) ----------------------------------------
+// A real PTY without npm packages: Node starts `python3 -u -c <helper>`. The helper
+// uses Python's `pty` module and passes bytes both ways:
+//   stdin  -> the PTY (typed text)
+//   stdout <- the PTY (output)
+//   fd 3   -> resize commands, one line each: "<cols> <rows>\n"
+// The exit code of the helper is the exit code of the shell.
+// Output goes to the page as base64 text, because the bridge sends JSON.
+
+const TERM_HELPER = String.raw`
+import fcntl, os, pty, select, signal, struct, sys, termios
+
+cols, rows, cwd = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+argv = sys.argv[4:]
+
+def set_size(fd, c, r):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", r, c, 0, 0))
+
+pid, fd = pty.fork()
+if pid == 0:
+    try:
+        os.chdir(cwd)
+    except OSError:
+        pass
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as e:
+        sys.stderr.write("cannot start %s: %s\n" % (argv[0], e))
+        os._exit(127)
+
+set_size(fd, cols, rows)
+ctl_buf = b""
+open_fds = {0: "stdin", fd: "pty", 3: "ctl"}
+try:
+    while fd in open_fds:
+        ready, _, _ = select.select(list(open_fds), [], [])
+        for r in ready:
+            if r == fd:
+                try:
+                    data = os.read(fd, 65536)
+                except OSError:
+                    data = b""
+                if not data:
+                    del open_fds[fd]
+                else:
+                    os.write(1, data)
+            elif r == 0:
+                data = os.read(0, 65536)
+                if not data:
+                    # The page or the bridge went away. Stop the shell.
+                    os.kill(pid, signal.SIGHUP)
+                    del open_fds[0]
+                else:
+                    os.write(fd, data)
+            else:
+                data = os.read(3, 4096)
+                if not data:
+                    del open_fds[3]
+                    continue
+                ctl_buf += data
+                while b"\n" in ctl_buf:
+                    line, ctl_buf = ctl_buf.split(b"\n", 1)
+                    parts = line.split()
+                    if len(parts) == 2:
+                        try:
+                            set_size(fd, int(parts[0]), int(parts[1]))
+                        except (ValueError, OSError):
+                            pass
+finally:
+    try:
+        os.kill(pid, signal.SIGHUP)
+    except OSError:
+        pass
+    _, status = os.waitpid(pid, 0)
+    sys.exit(os.waitstatus_to_exitcode(status))
+`;
+
+/** Running terminals: "<client id>:<term id>" -> { proc, client }. */
+const termSessions = new Map();
+let termCounter = 0;
+
+function killTerm(key) {
+  const s = termSessions.get(key);
+  if (!s) return;
+  termSessions.delete(key);
+  s.killed = true;
+  try {
+    s.proc.stdin.destroy();
+    s.proc.kill('SIGHUP');
+  } catch {
+    // The process is gone already.
+  }
+  // Hard stop for a shell that ignores SIGHUP.
+  setTimeout(() => s.proc.kill('SIGKILL'), 1000).unref();
+}
+
+// A closed browser tab never calls term_kill. The bridge forgets the client after
+// a while (see closeClientState), so stop the shells of unknown clients.
+setInterval(() => {
+  for (const [key, s] of termSessions) if (!clients.has(s.clientId)) killTerm(key);
+}, 10000).unref();
+process.on('exit', () => {
+  for (const key of [...termSessions.keys()]) killTerm(key);
+});
+
+const termCommands = {
+  async term_spawn({ cwd, cols, rows, shell, channel, events }, c) {
+    if (!channel || !events) throw invalid('term_spawn needs a channel and an events channel');
+    const parts = String(shell || '').trim().split(/\s+/).filter(Boolean);
+    const program = parts.length ? parts : [process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh'), '-l'];
+    let dir = String(cwd || '');
+    try {
+      if (!(await fsp.stat(dir)).isDirectory()) throw new Error('not a folder');
+    } catch {
+      dir = os.homedir();
+    }
+    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Kestrel' };
+    if (!env.LC_ALL && !env.LANG) env.LANG = 'en_US.UTF-8';
+
+    const args = ['-u', '-c', TERM_HELPER, String(cols || 80), String(rows || 24), dir, ...program];
+    const proc = spawn('python3', args, { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env });
+    await new Promise((resolve, reject) => {
+      proc.once('spawn', resolve);
+      proc.once('error', (e) => reject(new KError('io', `cannot start python3 for the terminal: ${e.message}`)));
+    });
+
+    const id = ++termCounter;
+    const key = `${c.id}:${id}`;
+    const session = { proc, clientId: c.id, killed: false };
+    termSessions.set(key, session);
+
+    // Batch output: send at most every 8 ms, like the Rust side.
+    let chunks = [];
+    let timer = null;
+    const flush = () => {
+      timer = null;
+      if (!chunks.length) return;
+      channel.send(Buffer.concat(chunks).toString('base64'));
+      chunks = [];
+    };
+    proc.stdout.on('data', (buf) => {
+      chunks.push(buf);
+      if (!timer) timer = setTimeout(flush, 8);
+    });
+    proc.stdin.on('error', () => {});
+    proc.stdio[3].on('error', () => {});
+    proc.once('close', (code) => {
+      clearTimeout(timer);
+      flush();
+      termSessions.delete(key);
+      events.send({ kind: 'exit', code: code ?? 0 });
+      events.end();
+      channel.end();
+    });
+    return { id, shell: program[0] };
+  },
+
+  async term_write({ id, data }, c) {
+    const s = termSessions.get(`${c.id}:${id}`);
+    if (!s) throw notFound(`terminal ${id} is not running`);
+    s.proc.stdin.write(String(data ?? ''));
+    return null;
+  },
+
+  async term_resize({ id, cols, rows }, c) {
+    const s = termSessions.get(`${c.id}:${id}`);
+    if (!s) throw notFound(`terminal ${id} is not running`);
+    s.proc.stdio[3].write(`${Math.max(1, cols | 0)} ${Math.max(1, rows | 0)}\n`);
+    return null;
+  },
+
+  async term_kill({ id }, c) {
+    killTerm(`${c.id}:${id}`);
+    return null;
+  },
+};
+Object.assign(commands, termCommands);
+
+// --- web_* -------------------------------------------------------------------
+// Web tabs are native web views. A normal browser cannot show them, so the
+// bridge has no web_* commands (they reject with "not available in the browser").

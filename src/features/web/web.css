@@ -1,0 +1,182 @@
+/* Web feature: web tab (toolbar and placeholder) and the Web sidebar view. Colors come from vars.css. */
+
+.web-tab {
+  display: flex;
+  flex-direction: column;
+}
+.web-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  outline: none;
+}
+.web-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  flex: none;
+}
+.web-btn,
+.web-zoom-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.web-btn:hover,
+.web-zoom-label:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.web-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.web-zoom-label {
+  font-size: 11px;
+  min-width: 40px;
+}
+.web-url {
+  flex: 1;
+  min-width: 80px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+.web-url:focus {
+  outline: 1px solid var(--focus-ring);
+  border-color: var(--focus-ring);
+}
+.web-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  flex: none;
+}
+.web-status.web-on {
+  background: var(--accent);
+}
+/* The native web view covers this box. The text shows only before the page appears. */
+.web-placeholder {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--fg-muted);
+}
+.web-placeholder.web-covered .web-placeholder-text {
+  display: none;
+}
+.web-error {
+  color: var(--danger);
+  padding: 16px;
+  text-align: center;
+}
+.web-unsupported {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+/* Sidebar view */
+.web-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+.web-view-actions {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.web-view-note {
+  padding: 8px 12px;
+  color: var(--fg-muted);
+}
+.web-section {
+  padding: 8px 12px 4px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.web-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--row-height);
+  padding: 2px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.web-row:hover,
+.web-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.web-row.web-current {
+  background: var(--active);
+}
+.web-row svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--fg-muted);
+}
+.web-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.web-row-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.web-row-close {
+  display: inline-flex;
+  visibility: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0;
+  cursor: pointer;
+}
+.web-row:hover .web-row-close {
+  visibility: visible;
+}

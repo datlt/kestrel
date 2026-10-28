@@ -57,6 +57,12 @@ export interface AppEvents {
    * Empty map when the folder is not a git repo.
    */
   'git:decorations': { root: string; files: Record<string, GitFileStatus> };
+  /**
+   * A popup over the editor area opened or closed (quick pick, palette, menu,
+   * dialog). Native web views sit above the page, so the web tabs hide while
+   * `open` is true.
+   */
+  'overlay:changed': { open: boolean };
   /** This workbench became the visible workspace tab of the window. */
   'workbench:activated': Record<string, never>;
   /** Another workspace tab became visible. This workbench stays alive in the background. */
@@ -187,6 +193,19 @@ export interface Settings {
   'db.confirmWrites': 'production' | 'always' | 'never';
   /** Show mysql, sys, information_schema and performance_schema in the database tree. */
   'db.showSystemSchemas': boolean;
+  /** Show the data sources of `.idea/dataSources.xml` of the open folder in the Database view. */
+  'db.idea.enabled': boolean;
+  /** Connect to the IntelliJ data sources when the Database view opens. */
+  'db.idea.autoConnect': boolean;
+  /** Web pages that open as tabs inside Kestrel (Web view). */
+  'web.bookmarks': string[];
+  /** Shell program for new terminals. Empty: the login shell ($SHELL, or PowerShell on Windows). */
+  'terminal.shell': string;
+  /** Terminal font size in px. 0: same as the editor. */
+  'terminal.fontSize': number;
+  /** Lines kept above the screen. */
+  'terminal.scrollback': number;
+  'terminal.cursorBlink': boolean;
 }
 
 export interface SettingsService {

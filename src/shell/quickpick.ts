@@ -7,6 +7,7 @@
 import { h } from '../core/dom';
 import type { QuickPickHandle, QuickPickItem, QuickPickOptions, UiService } from '../core/types';
 import { fuzzyFilter } from './fuzzy';
+import { overlayClosed, overlayOpened } from './overlay-count';
 
 const ROW_HEIGHT = 26;
 const MAX_VISIBLE_ROWS = 12;
@@ -244,6 +245,7 @@ export function createQuickPick(layer: HTMLElement): { open: UiService['quickPic
       clearTimeout(debounceTimer);
       clearTimeout(busyTimer);
       overlay.remove();
+      overlayClosed(layer);
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
       if (cancelled) opts.onCancel?.();
     }
@@ -306,6 +308,7 @@ export function createQuickPick(layer: HTMLElement): { open: UiService['quickPic
 
     closeActive = close;
     layer.append(overlay);
+    overlayOpened(layer);
     list.hidden = true;
     empty.hidden = true;
     update(true);

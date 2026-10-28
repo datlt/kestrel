@@ -23,10 +23,11 @@ import {
 import { h } from '../../core/dom';
 import type { MenuItem, ViewInstance } from '../../core/types';
 import { rafThrottle } from '../../core/util';
-import { dbColumns, dbDatabases, dbIndexes, dbObjects, dbPasswordDelete, type DbObjectKind } from '../../ipc/db';
+import { dbColumns, dbDatabases, dbIndexes, dbObjects, dbPasswordDelete, type DbConnectionConfig, type DbObjectKind } from '../../ipc/db';
 import { describeError } from './errors';
 import { copyName, removeConnection, upsertConnection } from './form-model';
 import type { DbHub } from './hub';
+import { AUTO_CONNECT_LIMIT, copyForSaving, ideaGroupLabel, runLimited } from './idea-model';
 import { connTabId, connTabInput, ddlTabInput, openConsole } from './tabs';
 import {
   collectOpen,
@@ -35,10 +36,12 @@ import {
   expandable,
   flatten,
   groupNodes,
+  ideaGroupNode,
   reset,
   selectTopSql,
   tableChildren,
   visibleDatabases,
+  type IdeaInfo,
   type Row,
   type TreeNode,
 } from './tree-model';
@@ -64,6 +67,10 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
   /** Database names as the server sent them, so the system schema setting can apply without a new request. */
   const rawDatabases = new Map<string, string[]>();
   let lastConnections = '';
+  /** The view is on screen now (set by onShow and onHide). */
+  let shown = false;
+  /** IntelliJ connections that the automatic connect already tried. */
+  const autoTried = new Set<string>();
 
   // --- DOM ---
   const btn = (icon: Parameters<typeof createElement>[0], title: string, run: () => void) =>
@@ -86,15 +93,45 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
 
   // --- Nodes ---
   function buildRoots() {
-    const old = new Map(roots.map((r) => [r.id, r]));
-    roots = hub.connections().map((c) => {
-      const prev = old.get(`c:${c.id}`);
+    // Old connection rows by id. IntelliJ rows live inside the group row.
+    const oldConns = new Map<string, TreeNode>();
+    const oldGroup = roots.find((r) => r.kind === 'idea-group');
+    for (const r of roots) {
+      if (r.kind === 'idea-group') r.children?.forEach((c) => oldConns.set(c.id, c));
+      else oldConns.set(r.id, r);
+    }
+    const keep = new Set<string>();
+    const reuse = (c: DbConnectionConfig, idea?: IdeaInfo): TreeNode => {
+      const id = `c:${c.id}`;
+      keep.add(id);
+      const prev = oldConns.get(id);
       // Same settings: keep the loaded tree. Changed settings: start again.
-      if (prev && JSON.stringify(prev.config) === JSON.stringify(c)) return prev;
-      if (prev) hub.closeMeta(c.id);
-      return connectionNode(c);
-    });
-    for (const [id] of old) if (!roots.some((r) => r.id === id)) hub.closeMeta(id.slice(2));
+      if (prev && JSON.stringify([prev.config, prev.idea]) === JSON.stringify([c, idea])) return prev;
+      if (prev) {
+        hub.closeMeta(c.id);
+        autoTried.delete(c.id);
+      }
+      return connectionNode(c, idea);
+    };
+    const next: TreeNode[] = [];
+    if (hub.idea.present()) {
+      const kids = hub.idea.sources().map((s) => reuse(s.config, { supported: s.supported, reason: s.reason, passwordSource: s.passwordSource }));
+      const group = ideaGroupNode(ideaGroupLabel(ctx.workspace.name), kids, hub.idea.error());
+      if (oldGroup) group.expanded = oldGroup.expanded;
+      next.push(group);
+    }
+    for (const c of hub.connections()) next.push(reuse(c));
+    roots = next;
+    for (const [id, n] of oldConns) {
+      if (keep.has(id)) continue;
+      hub.closeMeta(id.slice(2));
+      autoTried.delete(n.connId);
+    }
+  }
+
+  /** Every connection row, also the IntelliJ rows inside their group. */
+  function connectionNodes(): TreeNode[] {
+    return roots.flatMap((r) => (r.kind === 'idea-group' ? (r.children ?? []) : [r]));
   }
 
   function find(id: string): TreeNode | null {
@@ -131,7 +168,13 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     if (row.type === 'empty') return h('div', { class: 'db-tree-row db-faint', style }, h('span', { class: 'db-chev' }), '(empty)');
     if (row.type === 'error') {
       const retry = h('button', { class: 'db-link', type: 'button', onclick: () => void load(row.parent) }, 'Retry');
-      return h('div', { class: 'db-tree-row db-tree-error', style, title: row.message }, h('span', { class: 'db-chev' }), h('span', { class: 'db-tree-error-text' }, row.message), retry);
+      const el = h('div', { class: 'db-tree-row db-tree-error', style, title: row.message }, h('span', { class: 'db-chev' }), h('span', { class: 'db-tree-error-text' }, row.message), retry);
+      // An IntelliJ connection can become a normal saved connection, so the user can fix it in the form.
+      if (row.parent.kind === 'connection' && row.parent.config?.source) {
+        const parentId = row.parent.connId;
+        el.append(h('button', { class: 'db-link', type: 'button', title: 'Save a copy in your connections and open it', onclick: () => void copyToMine(parentId) }, 'Edit as my connection'));
+      }
+      return el;
     }
     const n = row.node;
     const can = expandable(n);
@@ -139,7 +182,7 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     let icon: Element;
     if (n.kind === 'connection') icon = h('span', { class: 'db-dot', style: n.config?.color ? `background:${n.config.color}` : '' });
     else if (n.kind === 'database') icon = createElement(Database);
-    else if (n.kind === 'group') icon = createElement(Folder);
+    else if (n.kind === 'group' || n.kind === 'idea-group') icon = createElement(Folder);
     else if (n.kind === 'object') icon = createElement(OBJECT_ICON[n.objectKind ?? 'table']);
     else if (n.kind === 'index') icon = createElement(ListTree);
     else icon = createElement(n.tags?.includes('PRI') ? Key : Columns3);
@@ -147,12 +190,12 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     const el = h(
       'div',
       {
-        class: `db-tree-row${n.id === selectedId ? ' is-selected' : ''}${n.kind === 'column' || n.kind === 'index' ? ' is-leaf' : ''}`,
+        class: `db-tree-row${n.id === selectedId ? ' is-selected' : ''}${n.kind === 'column' || n.kind === 'index' ? ' is-leaf' : ''}${n.idea && !n.idea.supported ? ' is-disabled' : ''}`,
         style,
         'data-id': n.id,
         role: 'treeitem',
         'aria-expanded': can ? String(n.expanded) : null,
-        title: n.kind === 'connection' && n.config ? `${n.config.user}@${n.config.host}:${n.config.port}` : n.detail ? `${n.label}  ${n.detail}` : n.label,
+        title: rowTitle(n),
       },
       chev,
       icon,
@@ -160,15 +203,42 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
       n.detail ? h('span', { class: 'db-tree-detail' }, n.detail) : null,
     );
     for (const t of n.tags ?? []) el.append(h('span', { class: 'db-tag' }, t));
+    if (n.kind === 'idea-group') el.append(h('span', { class: 'db-badge db-badge-idea', title: 'Data sources of .idea/dataSources.xml' }, 'IntelliJ'));
     if (n.kind === 'connection' && n.config) {
+      if (n.config.source) el.append(h('span', { class: 'db-badge db-badge-idea', title: 'This connection comes from the IntelliJ project' }, 'IntelliJ'));
+      if (n.conn) el.append(connState(n));
       if (n.config.production) el.append(h('span', { class: 'db-badge db-badge-prod', title: 'Production connection' }, 'PROD'));
       if (n.config.readOnly) el.append(h('span', { class: 'db-badge', title: 'Read-only connection' }, 'READ-ONLY'));
     }
     return el;
   }
 
+  function rowTitle(n: TreeNode): string {
+    if (n.idea && !n.idea.supported) return n.idea.reason ?? 'Not supported';
+    if (n.kind === 'idea-group') return n.error ?? 'Data sources of the IntelliJ project in this folder';
+    if (n.kind === 'connection' && n.config) {
+      const where = `${n.config.user}@${n.config.host}:${n.config.port}${n.config.ssh ? ` through ${n.config.ssh.host}` : ''}`;
+      return n.conn === 'error' && n.error ? `${where}\n${n.error}` : where;
+    }
+    return n.detail ? `${n.label}  ${n.detail}` : n.label;
+  }
+
+  function connState(n: TreeNode): HTMLElement {
+    const text = n.conn === 'connecting' ? 'connecting...' : n.conn === 'connected' ? 'connected' : 'failed';
+    return h('span', { class: `db-conn-state is-${n.conn}` }, text);
+  }
+
   // --- Loading ---
   async function load(node: TreeNode): Promise<void> {
+    if (node.kind === 'idea-group') {
+      // Read the IntelliJ files again. The list change rebuilds the rows.
+      node.state = 'loading';
+      render();
+      await hub.idea.load();
+      return;
+    }
+    const idea = node.kind === 'connection' && !!node.config?.source;
+    if (idea) node.conn = 'connecting';
     node.state = 'loading';
     node.error = undefined;
     render();
@@ -193,9 +263,15 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
         node.children = tableChildren(node.connId, database, name, cols, idx);
       }
       node.state = 'idle';
+      if (idea) node.conn = 'connected';
     } catch (e) {
       node.state = 'error';
       node.error = describeError(e).text;
+      if (idea) {
+        node.conn = 'error';
+        // Show the error row with Retry, also when the connect ran in the background.
+        node.expanded = true;
+      }
     }
     render();
   }
@@ -219,15 +295,65 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
   }
 
   async function refreshNode(node: TreeNode): Promise<void> {
+    if (node.kind === 'idea-group') {
+      void load(node);
+      return;
+    }
     const open = collectOpen([node]);
     reset(node);
-    if (node.kind === 'connection') hub.closeMeta(node.connId);
+    if (node.kind === 'connection') {
+      hub.closeMeta(node.connId);
+      node.conn = undefined;
+    }
     if (node.expanded && expandable(node)) await loadTree(node, open);
+    // An IntelliJ row shows its connect state, so it connects again also when it is closed.
+    else if (node.kind === 'connection' && node.idea?.supported) await load(node);
     else render();
   }
 
   function refreshAll(): void {
-    for (const r of roots) if (r.children !== undefined || r.state === 'error') void refreshNode(r);
+    for (const r of roots) {
+      if (r.kind === 'idea-group') {
+        for (const c of r.children ?? []) if (c.children !== undefined || c.state === 'error') void refreshNode(c);
+        void load(r);
+      } else if (r.children !== undefined || r.state === 'error') void refreshNode(r);
+    }
+  }
+
+  // --- IntelliJ connections ---
+  /**
+   * With `db.idea.autoConnect`, opens the meta session of each supported IntelliJ
+   * source, at most 4 at a time. It runs only while the view is on screen, and
+   * each source is tried once (Retry and Refresh connect again). It never asks
+   * for a password: a failed row offers Retry, and Retry asks.
+   */
+  function maybeAutoConnect(): void {
+    if (disposed || !shown || !hub.idea.autoConnect() || !ctx.window.isActive()) return;
+    const group = roots.find((r) => r.kind === 'idea-group');
+    const todo = (group?.children ?? []).filter((n) => n.idea?.supported && !autoTried.has(n.connId));
+    if (todo.length === 0) return;
+    for (const n of todo) autoTried.add(n.connId);
+    void runLimited(todo, AUTO_CONNECT_LIMIT, async (n) => {
+      if (disposed) return;
+      hub.denyAsking(n.connId);
+      try {
+        await load(n);
+      } finally {
+        hub.allowAsking(n.connId);
+      }
+    });
+  }
+
+  /** Saves a copy of an IntelliJ connection in the settings and opens its form. The password is not copied. */
+  async function copyToMine(connId: string): Promise<void> {
+    const src = hub.find(connId);
+    if (!src) return;
+    const list = hub.connections();
+    const copy = copyForSaving(src, crypto.randomUUID(), list.map((c) => c.name));
+    if (await saveConnections(upsertConnection(list, copy))) {
+      ctx.ui.notify('Saved a copy in your connections. The password is not copied. Enter it in the connection form.', { timeoutMs: 6000 });
+      ctx.tabs.open(connTabInput(hub, copy.id));
+    }
   }
 
   function collapseAll(): void {
@@ -294,7 +420,24 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     const refresh: MenuItem = { label: 'Refresh', run: () => void refreshNode(n), disabled: !expandable(n), separatorBefore: true };
     const copy: MenuItem = { label: 'Copy Name', run: () => void copyText(n.name ?? n.database ?? n.label), separatorBefore: true };
     switch (n.kind) {
+      case 'idea-group':
+        items.push({ label: 'Reload IntelliJ Data Sources', run: () => void refreshNode(n) });
+        break;
       case 'connection':
+        if (n.idea && !n.idea.supported) {
+          items.push({ label: 'Copy Name', run: () => void copyText(n.label) });
+          break;
+        }
+        if (n.config?.source) {
+          items.push(
+            { label: 'New SQL Console', run: () => openConsole(hub, { connId: n.connId }) },
+            refresh,
+            { label: 'Disconnect', run: () => { n.expanded = false; reset(n); n.conn = undefined; hub.closeMeta(n.connId); render(); } },
+            { label: 'Copy to My Connections', run: () => void copyToMine(n.connId), separatorBefore: true },
+            { label: 'Copy Name', run: () => void copyText(n.label), separatorBefore: true },
+          );
+          break;
+        }
         items.push(
           { label: 'New SQL Console', run: () => openConsole(hub, { connId: n.connId }) },
           refresh,
@@ -424,7 +567,7 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
       render();
     }
     if (e.settings['db.showSystemSchemas'] !== e.previous['db.showSystemSchemas']) {
-      for (const r of roots) {
+      for (const r of connectionNodes()) {
         const names = rawDatabases.get(r.connId);
         if (!names || r.children == null) continue;
         const open = collectOpen(r.children);
@@ -438,7 +581,15 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
       }
       render();
     }
+    if (e.settings['db.idea.autoConnect'] && !e.previous['db.idea.autoConnect']) maybeAutoConnect();
   });
+
+  const ideaSub = hub.idea.onChange(() => {
+    buildRoots();
+    render();
+    maybeAutoConnect();
+  });
+  const activatedSub = ctx.bus.on('workbench:activated', () => maybeAutoConnect());
 
   hub.tree = {
     refresh: refreshAll,
@@ -454,7 +605,12 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
 
   return {
     onShow() {
+      shown = true;
       paint();
+      maybeAutoConnect();
+    },
+    onHide() {
+      shown = false;
     },
     focus() {
       scroller.focus();
@@ -462,6 +618,8 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     dispose() {
       disposed = true;
       sub.dispose();
+      ideaSub.dispose();
+      activatedSub.dispose();
       if (hub.tree) hub.tree = null;
     },
   };

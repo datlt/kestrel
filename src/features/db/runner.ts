@@ -54,6 +54,10 @@ export class SqlRunner {
   async ensureSession(): Promise<boolean> {
     if (this.sessionId) return true;
     if (this.connecting) return false;
+    // An IntelliJ connection exists only after its list was read (a restored console asks too early).
+    await this.o.hub.idea.ready();
+    if (this.sessionId) return true;
+    if (this.connecting) return false;
     const config = this.o.getConfig();
     if (!config) {
       this.ctx.ui.notify('Choose a connection first.', { kind: 'warn' });
@@ -210,6 +214,8 @@ export class SqlRunner {
       this.ctx.ui.notify('There is no statement to run.', { kind: 'info', timeoutMs: 2500 });
       return;
     }
+    await this.o.hub.idea.ready();
+    if (this.running || this.connecting) return;
     const config = this.o.getConfig();
     if (!config) {
       this.ctx.ui.notify('Choose a connection first.', { kind: 'warn' });

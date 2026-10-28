@@ -2,6 +2,7 @@
 
 import { h } from '../core/dom';
 import type { MenuItem } from '../core/types';
+import { overlayClosed, overlayOpened } from './overlay-count';
 
 /** `layer` is the overlay layer inside the root element of this shell. */
 export function createMenu(keyLabel: (binding: string) => string, layer: HTMLElement) {
@@ -50,6 +51,7 @@ export function createMenu(keyLabel: (binding: string) => string, layer: HTMLEle
       window.removeEventListener('resize', dispose);
       window.removeEventListener('wheel', onOutside, true);
       menu.remove();
+      overlayClosed(layer);
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     };
     const onOutside = (e: Event) => {
@@ -105,6 +107,7 @@ export function createMenu(keyLabel: (binding: string) => string, layer: HTMLEle
     close = dispose;
     menu.style.visibility = 'hidden';
     layer.append(menu);
+    overlayOpened(layer);
     // x and y are window coordinates. The menu is positioned inside the layer,
     // so convert them and keep the menu inside the layer.
     const box = layer.getBoundingClientRect();

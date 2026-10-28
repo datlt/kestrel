@@ -2,11 +2,18 @@
 // import it. The view keeps the nodes and calls `flatten` to get the rows
 // that are visible. Only those rows get DOM elements.
 
-import type { DbColumnInfo, DbConnectionConfig, DbIndexInfo, DbObject, DbObjectKind, DbObjects } from '../../ipc/db';
+import type { DbColumnInfo, DbConnectionConfig, DbIdeaDataSource, DbIndexInfo, DbObject, DbObjectKind, DbObjects } from '../../ipc/db';
 
-export type NodeKind = 'connection' | 'database' | 'group' | 'object' | 'column' | 'index';
+/** `idea-group` is the header row "IntelliJ: <folder>" above the IntelliJ connections. */
+export type NodeKind = 'idea-group' | 'connection' | 'database' | 'group' | 'object' | 'column' | 'index';
 
 export type LoadState = 'idle' | 'loading' | 'error';
+
+/** State of an IntelliJ connection row. It is set when the connection is opened. */
+export type ConnState = 'connecting' | 'connected' | 'error';
+
+/** What an IntelliJ connection row needs besides its config. */
+export type IdeaInfo = Pick<DbIdeaDataSource, 'supported' | 'reason' | 'passwordSource'>;
 
 export interface TreeNode {
   /** Unique in the tree. Also used to keep the open state when the tree is rebuilt. */
@@ -25,6 +32,10 @@ export interface TreeNode {
   tags?: string[];
   /** `connection` nodes only. */
   config?: DbConnectionConfig;
+  /** IntelliJ `connection` nodes only. */
+  idea?: IdeaInfo;
+  /** IntelliJ `connection` nodes only: what the last connect did. */
+  conn?: ConnState;
   /** null: cannot have children. undefined: not loaded yet. */
   children?: TreeNode[] | null;
   expanded: boolean;
@@ -78,14 +89,31 @@ function base(partial: Partial<TreeNode> & Pick<TreeNode, 'id' | 'kind' | 'label
   return { expanded: false, state: 'idle', ...partial };
 }
 
-export function connectionNode(config: DbConnectionConfig): TreeNode {
+export function connectionNode(config: DbConnectionConfig, idea?: IdeaInfo): TreeNode {
   return base({
     id: `c:${config.id}`,
     kind: 'connection',
     label: config.name,
-    detail: `${config.host}:${config.port}`,
+    detail: idea && !idea.supported ? (idea.reason ?? undefined) : `${config.host}:${config.port}`,
     connId: config.id,
     config,
+    idea,
+    // A source that Kestrel cannot use has nothing to open.
+    children: idea && !idea.supported ? null : undefined,
+  });
+}
+
+/** The header row of the IntelliJ group. `error` is the text when the files cannot be read. */
+export function ideaGroupNode(label: string, children: TreeNode[], error: string | null): TreeNode {
+  return base({
+    id: 'i:group',
+    kind: 'idea-group',
+    label,
+    connId: '',
+    children,
+    expanded: true,
+    state: error ? 'error' : 'idle',
+    error: error ?? undefined,
   });
 }
 

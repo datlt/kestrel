@@ -16,6 +16,9 @@ mysql_async = { version = "0.37", default-features = false, features = ["default
 # macOS Keychain, Windows Credential Manager, Linux Secret Service.
 keyring = "4"
 libc = "0.2"
+# Reads the XML files of IntelliJ (.idea/dataSources.xml).
+quick-xml = "0.42"
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "signal"] }

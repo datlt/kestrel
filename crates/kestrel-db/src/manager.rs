@@ -5,6 +5,7 @@
 //! at a time: the connection sits behind a mutex that we only `try_lock`, and a
 //! second call while it is locked fails with `db_busy`.
 
+use crate::idea;
 use crate::error::{self, Phase, is_lost, map_error};
 use crate::schema;
 use crate::tunnel::{TunnelKey, Tunnels, tunnel_key};
@@ -160,6 +161,25 @@ struct Opened {
     tunnel: Option<TunnelKey>,
 }
 
+/// Finds the password when the caller sent none. Order for an IntelliJ source:
+/// the IntelliJ files, the IntelliJ keychain entry, the Kestrel keychain entry.
+/// Without a source: the Kestrel keychain entry. No entry means an empty password.
+/// The password is never logged.
+async fn resolve_password(cfg: &ConnectionConfig) -> Result<String> {
+    if let Some(src) = &cfg.source {
+        let (s, uuid, user) = (src.clone(), src.uuid.clone(), cfg.user.clone());
+        let from_file = tokio::task::spawn_blocking(move || idea::file_password(&s)).await.ok().flatten();
+        if let Some(p) = from_file {
+            return Ok(p);
+        }
+        let from_keychain = tokio::task::spawn_blocking(move || idea::intellij_keychain_password(&uuid, &user)).await.ok().flatten();
+        if let Some(p) = from_keychain {
+            return Ok(p);
+        }
+    }
+    Ok(keychain::get(&cfg.id).await.map_err(|e| Error::new(codes::DB_CONNECT, e.to_string()))?.unwrap_or_default())
+}
+
 fn connect_timeout(cfg: &ConnectionConfig) -> Duration {
     Duration::from_secs(cfg.connect_timeout_sec.unwrap_or(DEFAULT_CONNECT_TIMEOUT_SEC).clamp(1, 300))
 }
@@ -282,7 +302,7 @@ impl DbManager {
         let cfg = &args.config;
         let password = match &args.password {
             Some(p) => p.clone(),
-            None => keychain::get(&cfg.id).await.map_err(|e| Error::new(codes::DB_CONNECT, e.to_string()))?.unwrap_or_default(),
+            None => resolve_password(cfg).await?,
         };
         let timeout = connect_timeout(cfg);
         let (host, port, tunnel) = match &cfg.ssh {
