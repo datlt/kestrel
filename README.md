@@ -9,10 +9,6 @@
   Read, review and fix code in the age of AI agents.
 </p>
 
-<p align="center">
-  <img src="docs/images/hero.jpg" alt="Kestrel with two workspace tabs, a Kotlin file, compact packages in the Explorer and git blame">
-</p>
-
 Kestrel is a code editor for the daily work of a developer: read, review and
 fix code. It has what that work needs and leaves out the rest. You can change
 it, and **feature requests are welcome** (see [Feature requests](#feature-requests)).
@@ -44,14 +40,6 @@ target in a second. The editor tries to work the same way: light, able to hover
 over a big codebase so you see the whole picture, and quick when you go down to
 the exact line.
 
-## Screenshots
-
-| | |
-|---|---|
-| **Markdown, split view** <br> <img src="docs/images/markdown-split.jpg" alt="Markdown file with the editor on the left and the rendered preview on the right"> | **MySQL console** <br> <img src="docs/images/mysql-console.jpg" alt="SQL console with the database tree and a result grid"> |
-| **Diff of local changes** <br> <img src="docs/images/git-diff.jpg" alt="Side-by-side diff with collapsed unchanged lines"> | **File history** <br> <img src="docs/images/git-history.jpg" alt="Commits of a file and the diff of the selected commit"> |
-| **CSV as a table** <br> <img src="docs/images/csv-table.jpg" alt="CSV file shown as a sortable table"> | **Open folders in workspace tabs** <br> <img src="docs/images/open-folder-menu.jpg" alt="The + menu of the workspace tabs with recent folders"> |
-
 ## Features
 
 - **Workspace tabs.** Open several folders in one window. Each folder is a tab
@@ -69,6 +57,15 @@ the exact line.
   schema tree, SQL console with auto-commit on or off, commit and rollback,
   result grid, DDL viewer, and run-the-statement for `.sql` files. See
   [Database](#database-mysql).
+- **IntelliJ data sources.** Open a project that has `.idea/dataSources.xml`
+  and its MySQL data sources appear in the Database view and connect by
+  themselves. Nothing to set up again.
+- **Terminal** in the bottom panel: several terminal tabs, and each tab splits
+  into panes side by side or above each other.
+- **Web tabs.** Open web apps such as mail, calendar and chat as tabs next to
+  your code (Web view on the left). You log in once inside Kestrel; it keeps
+  the login. Kestrel cannot use the login of Chrome, because Chrome keeps its
+  cookies in its own encrypted store.
 - **Language servers (LSP)** for Kotlin, Java, JavaScript and TypeScript:
   completion, hover, go to definition, references, rename, format, problems.
   See [docs/LSP.md](docs/LSP.md).
@@ -236,6 +233,15 @@ Open the **Database** view with Ctrl-Shift-d (or the database icon on the left).
    procedures, functions and triggers. Right-click a table for **Select Top
    100**, **New SQL Console** and **Show DDL**.
 
+**IntelliJ data sources.** When the open folder has `.idea/dataSources.xml`,
+the Database view shows a group "IntelliJ: <folder>" with its data sources and
+connects to the MySQL ones when the view opens (settings `db.idea.enabled` and
+`db.idea.autoConnect`). The password comes from the JDBC URL in the file, or
+from the IntelliJ entry in the keychain. It stays in the Rust side of Kestrel.
+Names with `real`, `prod` or `live` count as production. Trino and other
+drivers are listed but not supported yet. Right-click a source and choose
+**Copy to My Connections** to change it.
+
 In a SQL console:
 
 | Action | Keys |
@@ -295,6 +301,10 @@ Main settings:
 | `db.maxRows` | `1000` | Rows fetched per result in a SQL console |
 | `db.confirmWrites` | `"production"` | Ask before data changes: `"production"`, `"always"` or `"never"` |
 | `db.showSystemSchemas` | `false` | Show `mysql`, `sys`, `information_schema`, `performance_schema` |
+| `db.idea.enabled`, `db.idea.autoConnect` | `true`, `true` | Show and connect the IntelliJ data sources of the open folder |
+| `terminal.shell` | `""` | Shell for new terminals (empty: your login shell) |
+| `terminal.fontSize` | `0` | Terminal font size (0: same as the editor) |
+| `web.bookmarks` | `[]` | Pages in the Web view |
 
 ## Keyboard shortcuts
 
@@ -333,6 +343,10 @@ Main settings:
 | Format document | Shift-Alt-f |
 | Workspace symbols | Mod-t |
 | Database view | Ctrl-Shift-d |
+| Terminal: show or hide, new terminal | Ctrl-`, Ctrl-Shift-` |
+| Terminal: split right, split down (in a terminal) | Mod-\\, Mod-Shift-\\ |
+| Terminal: next or previous pane, close pane, clear (in a terminal) | Mod-Alt-Right, Mod-Alt-Left, Mod-w, Mod-k |
+| Web tab: back, forward, reload | Mod-[, Mod-], Mod-Alt-r |
 | Run SQL statement, run script | Mod-Enter, Mod-Shift-Enter |
 
 All other commands are in the command palette.
@@ -362,11 +376,11 @@ src/            Web view code (TypeScript)
   window/       Workspace tabs and the window
   shell/        Layout, editor tabs, status bar, quick pick, palette
   editor/       CodeMirror editors, languages, drafts, auto save
-  features/     files, search, git, lsp, preview, settings, db
+  features/     files, search, git, lsp, preview, settings, db, terminal, web
   ui/           File type icons
   ipc/          Typed wrappers of the Rust commands
 src-tauri/      The Tauri app (Rust): thin command layer
-crates/         Rust logic without Tauri (common, fs, search, git, lsp, markdown, db)
+crates/         Rust logic without Tauri (common, fs, search, git, lsp, markdown, db, term)
 docs/           Design and guides
 scripts/        Test fixtures, measuring, dev bridge
 ```
@@ -398,7 +412,12 @@ On macOS they use about 100 MB more.
 - The app is not notarized by Apple (see "Install on macOS").
 - MySQL TLS modes `preferred` and `required` encrypt the connection but do not
   check the server certificate.
-- There is no terminal, no debugger and no extension system.
+- There is no debugger and no extension system.
+- Web tabs are native web views over the editor. While a page has the focus,
+  macOS sends Cmd shortcuts to the page, so click outside the page first.
+  Web tabs are not tested on Windows and Linux yet.
+- On Windows and Linux, Ctrl-w, Ctrl-k and Ctrl-\\ inside a terminal are
+  Kestrel shortcuts, not shell keys.
 
 ## Feature requests
 
