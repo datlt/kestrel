@@ -35,80 +35,68 @@ the system) and CodeMirror 6. It does not ship its own Chromium, so the app is
 
 ## Install on macOS
 
-You need macOS 11 or newer.
+You need macOS 11 or newer, and the tools in "Build from source" below.
 
-### From the DMG
-
-1. Get `Kestrel_<version>_aarch64.dmg` (Apple Silicon). For an Intel Mac, see
-   "Build an app for Intel Macs" below.
-2. Open the DMG and drag **Kestrel** into **Applications**.
-3. Start Kestrel from Launchpad or Spotlight.
-
-The app is signed ad hoc, not with an Apple Developer ID. If you downloaded the
-DMG (for example from a release page or a chat), macOS blocks the first start
-with "Apple could not verify Kestrel". Do one of these once:
-
-- In Finder, right-click **Kestrel** in Applications, choose **Open**, then
-  **Open** again.
-- Or open **System Settings > Privacy & Security**, scroll down, and click
-  **Open Anyway** next to the Kestrel message.
-- Or run this in Terminal:
-
-  ```sh
-  xattr -dr com.apple.quarantine /Applications/Kestrel.app
-  ```
-
-### Build the app yourself
-
-Install the requirements in "Build from source" first. Then:
+### Build the app
 
 ```sh
 npm install
-npm run tauri build
+npm run app
 ```
 
-The results are in `target/release/bundle/`:
+`npm run app` makes a release build of `Kestrel.app` (no DMG) and puts the
+newest copy in the repository folder: `./Kestrel.app`. Open it from Finder or
+with `open Kestrel.app`. Run the command again after you change the code; it
+replaces the old copy.
 
-| File | What it is |
-|------|------------|
-| `macos/Kestrel.app` | The app. Copy it to `/Applications`. |
-| `dmg/Kestrel_<version>_aarch64.dmg` | Disk image to share with other people. |
+`npm run app:open` does the same, then quits a running Kestrel and starts the
+new build.
 
-To install the app you built:
+To keep a copy in Applications:
 
 ```sh
-cp -R target/release/bundle/macos/Kestrel.app /Applications/
+cp -R Kestrel.app /Applications/
 ```
 
-### Build an app for Intel Macs
-
-A universal app runs on Apple Silicon and Intel Macs:
+The app is signed ad hoc, not with an Apple Developer ID. An app you build on
+your own Mac opens without a warning. If you copy it to another Mac (for
+example by chat or a download), macOS blocks the first start with "Apple could
+not verify Kestrel". On that Mac, right-click the app, choose **Open**, then
+**Open** again. Or run:
 
 ```sh
-rustup target add x86_64-apple-darwin aarch64-apple-darwin
-npm run tauri build -- --target universal-apple-darwin
+xattr -dr com.apple.quarantine /Applications/Kestrel.app
 ```
-
-The output is in `target/universal-apple-darwin/release/bundle/`.
 
 ### Open a folder from Terminal
 
 macOS passes the folder to Kestrel with `open`:
 
 ```sh
-open -na Kestrel --args ~/work/my-project
+open -na ~/work/editor/Kestrel.app --args ~/work/my-project
 ```
 
-Add this function to `~/.zshrc` to type `kestrel .` like `code .`:
+Add this function to `~/.zshrc` to type `kestrel .` like `code .`
+(change the path if your copy is in another place):
 
 ```sh
-kestrel() { open -na Kestrel --args "$(cd "${1:-.}" && pwd)"; }
+kestrel() { open -na ~/work/editor/Kestrel.app --args "$(cd "${1:-.}" && pwd)"; }
+```
+
+### Installers for other people
+
+`npm run tauri build` also makes a DMG in `target/release/bundle/dmg/`. For an
+app that runs on Apple Silicon and Intel Macs:
+
+```sh
+rustup target add x86_64-apple-darwin aarch64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin
 ```
 
 ### Uninstall
 
-Delete `/Applications/Kestrel.app`. To remove the settings and the saved state
-too, delete `~/Library/Application Support/dev.kestrel.editor/` and
+Delete `Kestrel.app`. To remove the settings and the saved state too, delete
+`~/Library/Application Support/dev.kestrel.editor/` and
 `~/Library/Caches/dev.kestrel.editor/`.
 
 ## Install on Windows and Linux
@@ -156,10 +144,11 @@ For other Linux systems, see the
 Then:
 
 ```sh
-git clone <this repository>
+git clone https://github.com/datlt/kestrel.git
 cd kestrel
 npm install
 npm run tauri dev      # run with live reload
+npm run app            # build ./Kestrel.app (macOS)
 npm run tauri build    # build the app and the installers
 ```
 
@@ -288,7 +277,7 @@ Release build on an Apple Silicon Mac (macOS 26), opening a small git repo.
 
 | What | Result |
 |------|--------|
-| App size (frontend inside) | 8 MB; DMG 4 MB |
+| App size (frontend inside) | 8 MB |
 | Start to visible window (warm) | about 350 ms; about 245 ms of it is macOS starting the web view |
 | Memory of the app process (physical footprint) | about 30 MB |
 | Quick open query, 300k files | 2 to 10 ms |

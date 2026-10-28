@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "app": "bash scripts/build-app.sh",
+    "app:open": "bash scripts/build-app.sh --open"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",

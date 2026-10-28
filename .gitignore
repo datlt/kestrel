@@ -5,3 +5,7 @@ target/
 .DS_Store
 *.log
 src-tauri/gen/schemas/
+
+# Newest local app build (npm run app)
+/Kestrel.app
+/Kestrel.app.new
