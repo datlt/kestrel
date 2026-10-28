@@ -7,6 +7,7 @@ use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkFinish
 use ignore::overrides::OverrideBuilder;
 use ignore::WalkState;
 use kestrel_common::{Error, Result};
+use kestrel_lang::{Lang, Region, RegionKind};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -36,6 +37,26 @@ pub struct TextOptions {
     pub exclude: Vec<String>,
     /// Stop after this many matching lines. 0 means no limit.
     pub max_results: usize,
+    /// Search only these files (absolute paths), in this order. The folder
+    /// walk is skipped. Include and exclude globs still apply. Empty: walk
+    /// the root.
+    pub paths: Vec<String>,
+    /// Where a match may be. Only Kotlin, Java and Swift files know about
+    /// comments and strings.
+    pub context: SearchContext,
+}
+
+/// Which matches to keep, by what is around them in the file.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchContext {
+    #[default]
+    Anywhere,
+    InComments,
+    InStrings,
+    ExceptComments,
+    ExceptStrings,
+    ExceptCommentsAndStrings,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -149,61 +170,66 @@ pub fn search_text(
     }
     let matcher = build_matcher(opts)?;
 
-    let mut walk = walker(root);
-    walk.max_filesize(Some(MAX_FILE_BYTES));
     let mut ob = OverrideBuilder::new(root);
     for g in glob_list(&opts.include, false).into_iter().chain(glob_list(&opts.exclude, true)) {
         ob.add(&g).map_err(|e| Error::invalid(format!("invalid glob: {e}")))?;
     }
-    walk.overrides(ob.build().map_err(|e| Error::invalid(format!("invalid glob: {e}")))?);
+    let overrides = ob.build().map_err(|e| Error::invalid(format!("invalid glob: {e}")))?;
 
     let limit = if opts.max_results == 0 { usize::MAX } else { opts.max_results };
     let total = AtomicUsize::new(0);
     let files = AtomicUsize::new(0);
     let limit_hit = AtomicBool::new(false);
     let batcher = Batcher { state: Mutex::new((Vec::new(), 0, Instant::now())), emit };
-    let stopped = || cancel.load(Ordering::Relaxed) || limit_hit.load(Ordering::Relaxed);
+    let shared = Shared {
+        matcher: &matcher,
+        context: opts.context,
+        total: &total,
+        files: &files,
+        limit,
+        limit_hit: &limit_hit,
+        cancel,
+        batcher: &batcher,
+    };
 
-    walk.build_parallel().run(|| {
-        let mut searcher: Searcher = SearcherBuilder::new()
-            .binary_detection(BinaryDetection::quit(0))
-            .line_number(true)
-            .build();
-        let matcher = &matcher;
-        let (total, files, limit_hit, batcher, stopped) = (&total, &files, &limit_hit, &batcher, &stopped);
-        Box::new(move |res| {
-            if stopped() {
-                return WalkState::Quit;
+    if opts.paths.is_empty() {
+        let mut walk = walker(root);
+        walk.max_filesize(Some(MAX_FILE_BYTES));
+        walk.overrides(overrides);
+        walk.build_parallel().run(|| {
+            let mut searcher = new_searcher();
+            let shared = &shared;
+            Box::new(move |res| {
+                if shared.stopped() {
+                    return WalkState::Quit;
+                }
+                let Ok(entry) = res else { return WalkState::Continue };
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                    return WalkState::Continue;
+                }
+                shared.process(&mut searcher, entry.path());
+                if shared.stopped() { WalkState::Quit } else { WalkState::Continue }
+            })
+        });
+    } else {
+        // One file after the other, so the results keep the order of the paths.
+        let mut searcher = new_searcher();
+        for p in &opts.paths {
+            if shared.stopped() {
+                break;
             }
-            let Ok(entry) = res else { return WalkState::Continue };
-            if !entry.file_type().is_some_and(|t| t.is_file()) {
-                return WalkState::Continue;
+            let path = Path::new(p);
+            let Ok(meta) = std::fs::metadata(path) else { continue };
+            if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+                continue;
             }
-            let mut sink = LineSink {
-                matcher,
-                lines: Vec::new(),
-                binary: false,
-                total,
-                limit,
-                limit_hit,
-                cancel,
-            };
-            // Read errors (permissions, files removed while we search) skip the file.
-            let _ = searcher.search_path(matcher, entry.path(), &mut sink);
-            if sink.binary {
-                total.fetch_sub(sink.lines.len(), Ordering::Relaxed);
-                sink.lines.clear();
+            let rel = path.strip_prefix(root).unwrap_or(path);
+            if overrides.matched(rel, false).is_ignore() {
+                continue;
             }
-            if !sink.lines.is_empty() {
-                files.fetch_add(1, Ordering::Relaxed);
-                batcher.add(FileMatches {
-                    path: entry.path().to_string_lossy().into_owned(),
-                    matches: sink.lines,
-                });
-            }
-            if stopped() { WalkState::Quit } else { WalkState::Continue }
-        })
-    });
+            shared.process(&mut searcher, path);
+        }
+    }
     batcher.flush();
 
     Ok(TextSummary {
@@ -215,6 +241,124 @@ pub fn search_text(
     })
 }
 
+fn new_searcher() -> Searcher {
+    SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).line_number(true).build()
+}
+
+/// What all worker threads share during one search.
+struct Shared<'a> {
+    matcher: &'a RegexMatcher,
+    context: SearchContext,
+    total: &'a AtomicUsize,
+    files: &'a AtomicUsize,
+    limit: usize,
+    limit_hit: &'a AtomicBool,
+    cancel: &'a AtomicBool,
+    batcher: &'a Batcher<'a>,
+}
+
+impl Shared<'_> {
+    fn stopped(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed) || self.limit_hit.load(Ordering::Relaxed)
+    }
+
+    /// Searches one file and hands the result to the batcher.
+    fn process(&self, searcher: &mut Searcher, path: &Path) {
+        let lang = path.extension().and_then(|e| e.to_str()).and_then(Lang::from_extension);
+        // These hold the file when a context filter needs the text.
+        let bytes: Vec<u8>;
+        let text: std::borrow::Cow<'_, str>;
+        let mut sink = LineSink {
+            matcher: self.matcher,
+            lines: Vec::new(),
+            binary: false,
+            total: self.total,
+            limit: self.limit,
+            limit_hit: self.limit_hit,
+            cancel: self.cancel,
+            filter: None,
+        };
+        match lang {
+            // Other files have no comments or strings that we know of.
+            None if matches!(self.context, SearchContext::InComments | SearchContext::InStrings) => return,
+            Some(lang) if self.context != SearchContext::Anywhere => {
+                // Read the file once. Search and filter work on the same text.
+                let Ok(read) = std::fs::read(path) else { return };
+                if read.len() as u64 > MAX_FILE_BYTES || read.contains(&0) {
+                    return;
+                }
+                bytes = read;
+                text = String::from_utf8_lossy(&bytes);
+                sink.filter = Some(CtxFilter { context: self.context, lang, text: &text, regions: None });
+                let _ = searcher.search_slice(self.matcher, text.as_bytes(), &mut sink);
+            }
+            // Read errors (permissions, files removed while we search) skip the file.
+            _ => {
+                let _ = searcher.search_path(self.matcher, path, &mut sink);
+            }
+        }
+        if sink.binary {
+            self.total.fetch_sub(sink.lines.len(), Ordering::Relaxed);
+            sink.lines.clear();
+        }
+        if !sink.lines.is_empty() {
+            self.files.fetch_add(1, Ordering::Relaxed);
+            self.batcher.add(FileMatches {
+                path: path.to_string_lossy().into_owned(),
+                matches: sink.lines,
+            });
+        }
+    }
+}
+
+/// Decides for one match if it fits the context. The regions of the file
+/// are computed when the first match asks.
+struct CtxFilter<'a> {
+    context: SearchContext,
+    lang: Lang,
+    text: &'a str,
+    regions: Option<Vec<Region>>,
+}
+
+impl CtxFilter<'_> {
+    fn keep(&mut self, start: usize, end: usize) -> bool {
+        let (lang, text) = (self.lang, self.text);
+        let regions = self.regions.get_or_insert_with(|| kestrel_lang::regions(lang, text));
+        keep_range(self.context, regions, start, end)
+    }
+}
+
+/// `regions` are sorted and do not overlap. A match is "in" a region when it
+/// fits completely. It "touches" a region when they share at least one byte.
+fn keep_range(context: SearchContext, regions: &[Region], start: usize, end: usize) -> bool {
+    let first = regions.partition_point(|r| r.end <= start);
+    let (mut in_comment, mut in_string, mut touch_comment, mut touch_string) = (false, false, false, false);
+    for r in &regions[first..] {
+        if r.start >= end {
+            break;
+        }
+        let inside = r.start <= start && end <= r.end;
+        match r.kind {
+            RegionKind::Comment => {
+                touch_comment = true;
+                in_comment |= inside;
+            }
+            RegionKind::String => {
+                touch_string = true;
+                in_string |= inside;
+            }
+        }
+    }
+    match context {
+        SearchContext::Anywhere => true,
+        SearchContext::InComments => in_comment,
+        SearchContext::InStrings => in_string,
+        SearchContext::ExceptComments => !touch_comment,
+        SearchContext::ExceptStrings => !touch_string,
+        SearchContext::ExceptCommentsAndStrings => !touch_comment && !touch_string,
+    }
+}
+
 struct LineSink<'a> {
     matcher: &'a RegexMatcher,
     lines: Vec<LineMatch>,
@@ -223,6 +367,7 @@ struct LineSink<'a> {
     limit: usize,
     limit_hit: &'a AtomicBool,
     cancel: &'a AtomicBool,
+    filter: Option<CtxFilter<'a>>,
 }
 
 impl Sink for LineSink<'_> {
@@ -233,7 +378,10 @@ impl Sink for LineSink<'_> {
             return Ok(false);
         }
         let line = String::from_utf8_lossy(m.bytes());
-        if let Some(found) = make_line_match(self.matcher, m.line_number().unwrap_or(0), &line) {
+        let base = m.absolute_byte_offset() as usize;
+        let filter = &mut self.filter;
+        let mut keep = |s: usize, e: usize| filter.as_mut().is_none_or(|f| f.keep(base + s, base + e));
+        if let Some(found) = make_line_match(self.matcher, m.line_number().unwrap_or(0), &line, &mut keep) {
             if self.total.fetch_add(1, Ordering::Relaxed) >= self.limit {
                 self.limit_hit.store(true, Ordering::Relaxed);
                 return Ok(false);
@@ -255,11 +403,17 @@ impl Sink for LineSink<'_> {
 
 /// Finds the ranges in one line and prepares the text for the frontend.
 /// Returns `None` when the line has no non-empty match.
-fn make_line_match(matcher: &RegexMatcher, line_no: u64, raw: &str) -> Option<LineMatch> {
+/// `keep` gets the byte range of each match in the line and says if the match counts.
+fn make_line_match(
+    matcher: &RegexMatcher,
+    line_no: u64,
+    raw: &str,
+    keep: &mut dyn FnMut(usize, usize) -> bool,
+) -> Option<LineMatch> {
     let text = raw.trim_end_matches(['\n', '\r']);
     let mut found: Vec<(usize, usize)> = Vec::new();
     let _ = matcher.find_iter(text.as_bytes(), |m| {
-        if m.end() > m.start() {
+        if m.end() > m.start() && keep(m.start(), m.end()) {
             found.push((m.start(), m.end()));
         }
         true
@@ -579,5 +733,228 @@ mod tests {
         let mut o = opts("^");
         o.regex = true;
         assert!(run(d.path(), &o).0.is_empty());
+    }
+
+    // --- paths ---
+
+    fn run_ordered(root: &Path, o: &TextOptions) -> (Vec<FileMatches>, TextSummary) {
+        let out = Mutex::new(Vec::new());
+        let sum = search_text(root, o, &AtomicBool::new(false), &|b| out.lock().extend(b)).unwrap();
+        (out.into_inner(), sum)
+    }
+
+    fn abs(root: &Path, rel: &str) -> String {
+        root.join(rel).to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn paths_keep_their_order_and_skip_bad_entries() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "a.txt", "needle a\n");
+        write(r, "b.txt", "needle b\n");
+        write(r, "sub/c.txt", "needle c\n");
+        write(r, "sub/other.txt", "needle other\n");
+        fs::write(r.join("bin.dat"), b"needle\0\x01\n").unwrap();
+        let mut o = opts("needle");
+        o.paths = vec![
+            abs(r, "sub/c.txt"),
+            abs(r, "missing.txt"),
+            abs(r, "a.txt"),
+            abs(r, "sub"),
+            abs(r, "bin.dat"),
+            abs(r, "b.txt"),
+        ];
+        let (res, s) = run_ordered(r, &o);
+        assert_eq!(names(r, &res), vec!["sub/c.txt", "a.txt", "b.txt"]);
+        assert_eq!(s.total_matches, 3);
+        assert_eq!(s.files_with_matches, 3);
+    }
+
+    #[test]
+    fn paths_do_not_walk_and_ignore_gitignore() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, ".gitignore", "ignored/\n");
+        write(r, "ignored/x.txt", "needle\n");
+        write(r, "other.txt", "needle\n");
+        let mut o = opts("needle");
+        o.paths = vec![abs(r, "ignored/x.txt")];
+        // The caller named the file, so it is searched, and no other file is.
+        assert_eq!(names(r, &run_ordered(r, &o).0), vec!["ignored/x.txt"]);
+    }
+
+    #[test]
+    fn paths_still_use_include_and_exclude() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "src/a.ts", "needle\n");
+        write(r, "src/b.js", "needle\n");
+        write(r, "vendor/c.ts", "needle\n");
+        let all = vec![abs(r, "vendor/c.ts"), abs(r, "src/b.js"), abs(r, "src/a.ts")];
+        let mut o = opts("needle");
+        o.paths = all.clone();
+        o.include = vec!["*.ts".into()];
+        assert_eq!(names(r, &run_ordered(r, &o).0), vec!["vendor/c.ts", "src/a.ts"]);
+        o.exclude = vec!["vendor".into()];
+        assert_eq!(names(r, &run_ordered(r, &o).0), vec!["src/a.ts"]);
+        let mut o = opts("needle");
+        o.paths = all;
+        o.exclude = vec!["*.js".into()];
+        assert_eq!(names(r, &run_ordered(r, &o).0), vec!["vendor/c.ts", "src/a.ts"]);
+    }
+
+    #[test]
+    fn paths_stop_at_the_limit() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "a.txt", &"needle\n".repeat(10));
+        write(r, "b.txt", &"needle\n".repeat(10));
+        let mut o = opts("needle");
+        o.paths = vec![abs(r, "a.txt"), abs(r, "b.txt")];
+        o.max_results = 15;
+        let (res, s) = run_ordered(r, &o);
+        assert!(s.truncated);
+        assert_eq!(s.total_matches, 15);
+        assert_eq!(res.iter().map(|f| f.matches.len()).sum::<usize>(), 15);
+    }
+
+    #[test]
+    fn sub_folder_root_uses_ignore_files_above_it() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, ".gitignore", "*.log\n/mod/gen/\nbuild/\n");
+        write(r, "mod/.gitignore", "local.txt\n");
+        write(r, "mod/a.txt", "needle\n");
+        write(r, "mod/b.log", "needle\n");
+        write(r, "mod/gen/x.txt", "needle\n");
+        write(r, "mod/src/build/y.txt", "needle\n");
+        write(r, "mod/local.txt", "needle\n");
+        write(r, "mod/src/z.txt", "needle\n");
+        write(r, "top.txt", "needle\n");
+        fs::create_dir_all(r.join(".git")).unwrap();
+        let sub = r.join("mod");
+        let (res, _) = run(&sub, &opts("needle"));
+        assert_eq!(names(&sub, &res), vec!["a.txt", "src/z.txt"]);
+    }
+
+    // --- context ---
+
+    const KOTLIN: &str = "val code = NEEDLE\n// NEEDLE comment\nval s = \"NEEDLE string\"\nval t = \"s\" + x\n/* c */ val b = 1\nval e = \"a ${NEEDLE} b\"\n";
+    const JAVA: &str = "int code = NEEDLE;\n// NEEDLE comment\nString s = \"NEEDLE string\";\nString t = \"s\" + x;\n/* c */ int b = 1;\nint e = foo(NEEDLE);\n";
+    const SWIFT: &str = "let code = NEEDLE\n// NEEDLE comment\nlet s = \"NEEDLE string\"\nlet t = \"s\" + x\n/* c */ let b = 1\nlet e = \"a \\(NEEDLE) b\"\n";
+    const PLAIN: &str = "NEEDLE\n// NEEDLE comment\n\"NEEDLE string\"\n\"s\" + x\n/* c */ let b = 1\n";
+
+    const ALL_CONTEXTS: [SearchContext; 6] = [
+        SearchContext::Anywhere,
+        SearchContext::InComments,
+        SearchContext::InStrings,
+        SearchContext::ExceptComments,
+        SearchContext::ExceptStrings,
+        SearchContext::ExceptCommentsAndStrings,
+    ];
+
+    /// The line numbers that match `query` in the one file `name`.
+    fn lines_for(name: &str, text: &str, query: &str, context: SearchContext) -> Vec<u64> {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), name, text);
+        let mut o = opts(query);
+        o.context = context;
+        let (r, s) = run(d.path(), &o);
+        let lines: Vec<u64> = r.iter().flat_map(|f| f.matches.iter().map(|m| m.line)).collect();
+        assert_eq!(s.total_matches, lines.len(), "total counts the kept matches ({name}, {context:?})");
+        assert_eq!(s.files_with_matches, r.len());
+        lines
+    }
+
+    #[test]
+    fn context_filters_jvm_and_swift_files() {
+        for (name, text) in [("A.kt", KOTLIN), ("A.java", JAVA), ("A.swift", SWIFT)] {
+            // Matches in code (1, 6), comment (2), string (3).
+            let expect: [&[u64]; 6] = [&[1, 2, 3, 6], &[2], &[3], &[1, 3, 6], &[1, 2, 6], &[1, 6]];
+            for (ctx, want) in ALL_CONTEXTS.iter().zip(expect) {
+                assert_eq!(lines_for(name, text, "NEEDLE", *ctx), want, "{name} {ctx:?}");
+            }
+            // The match `" +` starts in the string and ends in code.
+            let expect: [&[u64]; 6] = [&[4], &[], &[], &[4], &[], &[]];
+            for (ctx, want) in ALL_CONTEXTS.iter().zip(expect) {
+                assert_eq!(lines_for(name, text, "\" +", *ctx), want, "{name} border string {ctx:?}");
+            }
+            // The match `*/ l` or `*/ i` starts in the comment and ends in code.
+            let q = if name == "A.java" { "*/ int" } else { "*/ " };
+            let expect: [&[u64]; 6] = [&[5], &[], &[], &[], &[5], &[]];
+            for (ctx, want) in ALL_CONTEXTS.iter().zip(expect) {
+                assert_eq!(lines_for(name, text, q, *ctx), want, "{name} border comment {ctx:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn context_ignores_other_files_except_in_filters() {
+        for ctx in ALL_CONTEXTS {
+            let got = lines_for("notes.txt", PLAIN, "NEEDLE", ctx);
+            match ctx {
+                SearchContext::InComments | SearchContext::InStrings => assert!(got.is_empty(), "{ctx:?}"),
+                _ => assert_eq!(got, vec![1, 2, 3], "{ctx:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn context_counts_after_the_filter_and_skips_binary() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "A.kt", "// NEEDLE NEEDLE\nval x = NEEDLE\nval y = NEEDLE\n");
+        write(r, "B.kt", "// NEEDLE only a comment\n");
+        fs::write(r.join("C.kt"), b"val x = NEEDLE\0\n").unwrap();
+        let mut o = opts("NEEDLE");
+        o.context = SearchContext::ExceptComments;
+        let (res, s) = run(r, &o);
+        assert_eq!(names(r, &res), vec!["A.kt"]);
+        assert_eq!(s.total_matches, 2);
+        assert_eq!(s.files_with_matches, 1);
+        o.context = SearchContext::InComments;
+        let (res, s) = run(r, &o);
+        assert_eq!(names(r, &res), vec!["A.kt", "B.kt"]);
+        assert_eq!(res[0].matches[0].ranges.len(), 2);
+        assert_eq!(s.total_matches, 2);
+    }
+
+    #[test]
+    fn context_works_with_paths_and_ranges_after_non_ascii() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        // The byte offsets of the regions are not the character offsets here.
+        write(r, "J.java", "String a = \"日本語 😀\"; // 日本 NEEDLE\nint NEEDLE = 1; // 😀\n");
+        let mut o = opts("NEEDLE");
+        o.paths = vec![abs(r, "J.java")];
+        o.context = SearchContext::InComments;
+        let (res, _) = run_ordered(r, &o);
+        assert_eq!(res[0].matches.len(), 1);
+        assert_eq!(res[0].matches[0].line, 1);
+        o.context = SearchContext::ExceptComments;
+        let (res, _) = run_ordered(r, &o);
+        assert_eq!(res[0].matches.len(), 1);
+        assert_eq!(res[0].matches[0].line, 2);
+    }
+
+    /// Run by hand: `KESTREL_BENCH_ROOT=/some/repo cargo test -p kestrel-search --release bench -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_context_and_modules() {
+        let Ok(root) = std::env::var("KESTREL_BENCH_ROOT") else { return };
+        let root = Path::new(&root);
+        let query = std::env::var("KESTREL_BENCH_QUERY").unwrap_or_else(|_| "user".into());
+        for round in 0..2 {
+            for ctx in ALL_CONTEXTS {
+                let mut o = opts(&query);
+                o.context = ctx;
+                let s = search_text(root, &o, &AtomicBool::new(false), &|_| {}).unwrap();
+                println!("round {round} {ctx:?}: {} ms, {} matches in {} files", s.elapsed_ms, s.total_matches, s.files_with_matches);
+            }
+            let t = Instant::now();
+            let m = crate::search_modules(root).unwrap();
+            println!("round {round} modules: {} ms, {} found", t.elapsed().as_millis(), m.len());
+        }
     }
 }

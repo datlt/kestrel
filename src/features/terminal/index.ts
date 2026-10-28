@@ -4,6 +4,7 @@
 import type { AppContext } from '../../core/types';
 import './terminal.css';
 import { createTerminalView, TerminalPanel, VIEW_ID } from './panel';
+import { inputLog, RECORD_MS } from './input-log';
 import { parseRunArgs } from './run';
 
 /** Registers the Terminal panel with tabs and split panes. */
@@ -12,6 +13,7 @@ export function initTerminal(ctx: AppContext): void {
   // True while a popup (command palette, menu) is open. Then the focus is in the popup,
   // but the commands of the focused terminal must still work from the palette.
   let overlayOpen = false;
+  let recordTimer: ReturnType<typeof setTimeout> | null = null;
 
   ctx.views.register(
     createTerminalView(ctx, (p) => {
@@ -78,6 +80,40 @@ export function initTerminal(ctx: AppContext): void {
         },
       },
       {
+        // Diagnosis for input methods. Off by default: the log can hold passwords.
+        id: 'terminal.recordInput',
+        title: 'Terminal: Record Input Events (60 seconds)',
+        category,
+        run: () => {
+          if (recordTimer) clearTimeout(recordTimer);
+          inputLog.start(performance.now());
+          ctx.ui.notify('Recording input events for 60 seconds. Do not type passwords now.', { kind: 'warn' });
+          recordTimer = setTimeout(() => {
+            recordTimer = null;
+            inputLog.stop();
+            ctx.ui.notify(`Recording stopped (${inputLog.size} events). Run "Terminal: Copy Input Event Log" to copy them.`);
+          }, RECORD_MS);
+        },
+      },
+      {
+        id: 'terminal.copyInputLog',
+        title: 'Terminal: Copy Input Event Log',
+        category,
+        run: async () => {
+          const text = inputLog.toText();
+          if (!text) {
+            ctx.ui.notify('The input event log is empty. Run "Terminal: Record Input Events" first.', { kind: 'warn' });
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(text);
+            ctx.ui.notify(`Copied ${inputLog.size} input events.`);
+          } catch (e) {
+            ctx.ui.notify(`Cannot copy the log: ${e instanceof Error ? e.message : String(e)}`, { kind: 'error' });
+          }
+        },
+      },
+      {
         id: 'terminal.splitRight',
         title: 'Split Terminal Right',
         category,
@@ -133,6 +169,8 @@ export function initTerminal(ctx: AppContext): void {
   // (Hidden workbenches keep their terminals running.)
   ctx.bus.on('workbench:disposing', () => {
     subs.forEach((s) => s.dispose());
+    if (recordTimer) clearTimeout(recordTimer);
+    inputLog.stop();
     panel?.dispose();
     panel = null;
   });

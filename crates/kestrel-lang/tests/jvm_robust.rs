@@ -1,6 +1,6 @@
 //! Robustness tests: broken input must never panic or hang.
 
-use kestrel_lang::{find_identifiers, parse, Lang};
+use kestrel_lang::{find_identifiers, parse, regions, Lang};
 use std::time::{Duration, Instant};
 
 const KT: &str = include_str!("fixtures/kotlin/Sample.kt");
@@ -11,6 +11,7 @@ fn run_both(src: &str) {
         let _ = parse(lang, src);
         let _ = find_identifiers(lang, src, "Foo");
         let _ = find_identifiers(lang, src, "a");
+        let _ = regions(lang, src);
     }
 }
 
@@ -37,6 +38,7 @@ fn every_prefix_of_the_fixtures() {
             let cut = &src[..i];
             let _ = parse(lang, cut);
             let _ = find_identifiers(lang, cut, "Foo");
+            let _ = regions(lang, cut);
         }
     }
 }
@@ -48,6 +50,7 @@ fn every_suffix_of_the_fixtures() {
             let cut = &src[i..];
             let _ = parse(lang, cut);
             let _ = find_identifiers(lang, cut, "Foo");
+            let _ = regions(lang, cut);
         }
     }
 }
@@ -78,6 +81,7 @@ fn random_edits_of_the_fixtures() {
             let s: String = c.into_iter().collect();
             let _ = parse(lang, &s);
             let _ = find_identifiers(lang, &s, "Foo");
+            let _ = regions(lang, &s);
         }
     }
 }

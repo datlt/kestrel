@@ -787,3 +787,60 @@ fn unclosed_body_end_lines() {
     let m = p("class A {\n    func f(\n");
     assert_eq!(ty(&m, "A").methods[0].end_line, 2);
 }
+
+// ---------- regions ----------
+
+fn regs(text: &str) -> Vec<(RegionKind, String)> {
+    let r = regions(Lang::Swift, text);
+    let mut last = 0;
+    for x in &r {
+        assert!(x.start >= last && x.end > x.start && x.end <= text.len(), "{r:?}");
+        last = x.end;
+    }
+    r.iter().map(|x| (x.kind, text[x.start..x.end].to_string())).collect()
+}
+
+#[test]
+fn regions_comments() {
+    use RegionKind::*;
+    let r = regs("a // x\nb /* y /* z */ w */ c /// doc\n/** d */");
+    assert_eq!(
+        r,
+        vec![
+            (Comment, "// x".into()),
+            (Comment, "/* y /* z */ w */".into()),
+            (Comment, "/// doc".into()),
+            (Comment, "/** d */".into())
+        ]
+    );
+    assert_eq!(regs("x /* never"), vec![(Comment, "/* never".into())]);
+}
+
+#[test]
+fn regions_strings() {
+    use RegionKind::*;
+    assert_eq!(regs("let a = \"x\\\"y\" + b"), vec![(String, "\"x\\\"y\"".into())]);
+    assert_eq!(regs("let a = \"\"\"\n  a \"q\" // not\n  \"\"\""), vec![(String, "\"\"\"\n  a \"q\" // not\n  \"\"\"".into())]);
+    assert_eq!(regs("#\"a \"b\" \\n\"#"), vec![(String, "#\"a \"b\" \\n\"#".into())]);
+    assert_eq!(regs("##\"a\"#b\"##"), vec![(String, "##\"a\"#b\"##".into())]);
+    assert_eq!(regs("let r = /a+b/"), vec![(String, "/a+b/".into())]);
+    assert_eq!(regs("let a = \"open"), vec![(String, "\"open".into())]);
+    assert_eq!(regs("let a = \"\"\"\nopen"), vec![(String, "\"\"\"\nopen".into())]);
+}
+
+#[test]
+fn regions_interpolation() {
+    use RegionKind::*;
+    let r = regs("\"a \\(b + \"c\") d\" // e");
+    assert_eq!(
+        r,
+        vec![
+            (String, "\"a ".into()),
+            (String, "\"c\"".into()),
+            (String, " d\"".into()),
+            (Comment, "// e".into())
+        ]
+    );
+    let r = regs("#\"a \\#(x /* c */) \\(y)\"#");
+    assert_eq!(r, vec![(String, "#\"a ".into()), (Comment, "/* c */".into()), (String, " \\(y)\"#".into())]);
+}

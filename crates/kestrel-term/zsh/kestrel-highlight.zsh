@@ -82,7 +82,10 @@ __kestrel_hl() {
         else
           w=${w#\\}
           f=0
-          if (( $+reswords[$w] || $+aliases[$w] || $+functions[$w] || $+builtins[$w] || $+commands[$w] )); then
+          # `whence` knows reserved words, aliases, functions, builtins and
+          # commands. Do not use `$+reswords[$w]` in `(( ))`: that subscript is
+          # read as math, so a word like `!!` printed an error on every key.
+          if whence -- "$w" >/dev/null 2>&1; then
             f=1
           elif [[ $w == */* || $w == '~'* ]]; then
             p=${(Q)w}
@@ -112,5 +115,11 @@ __kestrel_hl() {
   region_highlight+=( "${out[@]}" )
 }
 
-zle -N __kestrel_hl
-add-zle-hook-widget zle-line-pre-redraw __kestrel_hl
+# The hook runs on every key. An error message there would break the command
+# line, so the widget keeps all of its errors to itself.
+__kestrel_hl_safe() {
+  __kestrel_hl 2>/dev/null
+}
+
+zle -N __kestrel_hl_safe
+add-zle-hook-widget zle-line-pre-redraw __kestrel_hl_safe

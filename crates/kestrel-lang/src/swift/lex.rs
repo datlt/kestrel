@@ -73,9 +73,21 @@ struct Lx<'a> {
     nl: bool,
     out: Vec<Tok>,
     stack: Vec<Interp>,
+    /// Comment ranges. Only filled when `want` is set.
+    comments: Vec<(u32, u32)>,
+    want: bool,
 }
 
 pub(super) fn lex(src: &str) -> Vec<Tok> {
+    lex_all(src, false).0
+}
+
+/// Like `lex`, and also gives the byte ranges of all comments.
+pub(super) fn lex_with_comments(src: &str) -> (Vec<Tok>, Vec<(u32, u32)>) {
+    lex_all(src, true)
+}
+
+fn lex_all(src: &str, want: bool) -> (Vec<Tok>, Vec<(u32, u32)>) {
     let b = src.as_bytes();
     // Positions are u32 in tokens. Longer input is cut.
     let n = b.len().min(u32::MAX as usize - 1);
@@ -88,9 +100,11 @@ pub(super) fn lex(src: &str) -> Vec<Tok> {
         nl: false,
         out: Vec::with_capacity(n / 5 + 16),
         stack: Vec::new(),
+        comments: Vec::new(),
+        want,
     };
     lx.run();
-    lx.out
+    (lx.out, lx.comments)
 }
 
 impl<'a> Lx<'a> {
@@ -250,6 +264,9 @@ impl<'a> Lx<'a> {
                 while j < n && b[j] != b'\n' {
                     j += 1;
                 }
+                if self.want {
+                    self.comments.push((i as u32, j as u32));
+                }
                 self.i = j;
             }
             Some(b'*') => {
@@ -278,6 +295,9 @@ impl<'a> Lx<'a> {
                     }
                 }
                 self.i = j.min(n);
+                if self.want {
+                    self.comments.push((i as u32, self.i as u32));
+                }
             }
             _ => {
                 if self.regex_allowed() {

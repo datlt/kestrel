@@ -8,6 +8,7 @@ import { h } from '../../core/dom';
 import { isMac } from '../../core/util';
 import type { Settings } from '../../core/types';
 import { termKill, termResize, termSpawn, termWrite, type TermSession } from '../../ipc/term';
+import { escapeControl, inputLog } from './input-log';
 import { attachIme, isImeKey, type ImeHandle } from './ime';
 import { clipboardAction, isClosingKey, routeKey } from './keys';
 import { readyDelay } from './run';
@@ -197,6 +198,7 @@ export class TerminalPane {
     }
 
     term.onData((data) => {
+      inputLog.add(performance.now(), `xterm data ${escapeControl(data)}`);
       this._typed = true;
       this.send(data);
     });

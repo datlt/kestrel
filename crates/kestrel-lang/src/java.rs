@@ -1403,3 +1403,8 @@ impl<'a> P<'a> {
         e
     }
 }
+
+/// Comments and string literals (see `crate::regions`).
+pub(crate) fn regions(text: &str) -> Vec<crate::model::Region> {
+    crate::jvm_lex::regions(text, false)
+}

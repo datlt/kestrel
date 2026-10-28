@@ -288,3 +288,26 @@ pub struct IdentHit {
     /// when the part before it is not a plain dotted name (`foo().bar`).
     pub qualifier: String,
 }
+
+/// What a region of the text is (see `regions`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RegionKind {
+    /// Line, block and doc comments, with their `//`, `/*`, `*/`.
+    Comment,
+    /// String and character literals, with their quotes. The code inside
+    /// Kotlin `${...}` and Swift `\(...)` is not part of the string: the
+    /// string is split around it. A Kotlin `$name` is code too.
+    String,
+}
+
+/// A comment or a string literal in the text. Everything outside these
+/// regions is code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Region {
+    /// Byte range in the text.
+    pub start: usize,
+    pub end: usize,
+    pub kind: RegionKind,
+}

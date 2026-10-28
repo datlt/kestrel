@@ -921,7 +921,7 @@ function globToRegExp(glob) {
   return new RegExp(anywhere ? `(^|/)${re}(/|$)` : `^${re}(/|$)`);
 }
 
-function makeLineMatch(lineNo, raw, re) {
+function makeLineMatch(lineNo, raw, re, keep = null) {
   const text = raw.replace(/[\r\n]+$/, '');
   re.lastIndex = 0;
   const found = [];
@@ -931,7 +931,7 @@ function makeLineMatch(lineNo, raw, re) {
       re.lastIndex++;
       continue;
     }
-    found.push([m.index, m.index + m[0].length]);
+    if (!keep || keep(m.index, m.index + m[0].length)) found.push([m.index, m.index + m[0].length]);
   }
   if (found.length === 0) return null;
   const first = found[0][0];
@@ -950,6 +950,307 @@ function makeLineMatch(lineNo, raw, re) {
   }
   if (ranges.length === 0) return null;
   return { line: lineNo, text: text.slice(begin, end), ranges, offset: begin };
+}
+
+// --- Find in Files: context filter (comments and strings) -------------------
+
+const CONTEXT_LANGS = { kt: 'kotlin', kts: 'kotlin', java: 'java', swift: 'swift' };
+
+/**
+ * Finds the comments and string literals of a Kotlin, Java or Swift text.
+ * Small and tolerant, good enough for tests in the browser. The Rust side
+ * uses `kestrel_lang::regions`. Returns `[{ s, e, kind }]` in UTF-16 indexes,
+ * sorted, `kind` is 'comment' or 'string'.
+ */
+function scanRegions(lang, text) {
+  const kotlin = lang === 'kotlin';
+  const swift = lang === 'swift';
+  const n = text.length;
+  const regions = [];
+  /** Open `${...}` (Kotlin) or `\(...)` (Swift) templates: the string to go back to and the bracket depth. */
+  const stack = [];
+  const push = (s, e, kind) => {
+    if (e > s) regions.push({ s, e: Math.min(e, n), kind });
+  };
+  // Reads the inside of a string from `j`. Returns the index where code goes on.
+  const body = (pieceStart, j, spec) => {
+    while (j < n) {
+      if (text.startsWith(spec.close, j)) {
+        j += spec.close.length;
+        push(pieceStart, j, 'string');
+        return j;
+      }
+      if (!spec.raw && text.startsWith(spec.esc, j)) {
+        if (swift && text[j + spec.esc.length] === '(') {
+          push(pieceStart, j, 'string');
+          stack.push({ spec, depth: 0 });
+          return j + spec.esc.length + 1;
+        }
+        j += spec.esc.length + 1;
+        continue;
+      }
+      if (kotlin && text[j] === '$' && text[j + 1] === '{') {
+        push(pieceStart, j, 'string');
+        stack.push({ spec, depth: 0 });
+        return j + 2;
+      }
+      if (!spec.triple && text[j] === '\n') {
+        push(pieceStart, j, 'string');
+        return j;
+      }
+      j++;
+    }
+    push(pieceStart, n, 'string');
+    return n;
+  };
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') {
+      let e = text.indexOf('\n', i);
+      if (e < 0) e = n;
+      push(i, e, 'comment');
+      i = e;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        if (lang !== 'java' && text.startsWith('/*', j)) {
+          depth++;
+          j += 2;
+        } else if (text.startsWith('*/', j)) {
+          depth--;
+          j += 2;
+        } else j++;
+      }
+      push(i, j, 'comment');
+      i = j;
+      continue;
+    }
+    if (c === '"' || (swift && c === '#')) {
+      let k = i;
+      let hashes = 0;
+      if (swift) {
+        while (text[k] === '#') {
+          hashes++;
+          k++;
+        }
+        if (text[k] !== '"') {
+          i++;
+          continue;
+        }
+      }
+      const triple = text.startsWith('"""', k);
+      const spec = {
+        triple,
+        hashes,
+        raw: kotlin && triple,
+        esc: swift ? `\\${'#'.repeat(hashes)}` : '\\',
+        close: '"'.repeat(triple ? 3 : 1) + '#'.repeat(hashes),
+      };
+      i = body(i, k + (triple ? 3 : 1), spec);
+      continue;
+    }
+    if (!swift && c === "'") {
+      let j = i + 1;
+      if (text[j] === '\\') {
+        j += 2;
+        while (j < n && j < i + 12 && text[j] !== "'" && text[j] !== '\n') j++;
+      } else {
+        j += text.codePointAt(j) > 0xffff ? 2 : 1;
+      }
+      if (text[j] === "'") {
+        push(i, j + 1, 'string');
+        i = j + 1;
+      } else i++;
+      continue;
+    }
+    if (stack.length) {
+      const top = stack[stack.length - 1];
+      if (c === (kotlin ? '{' : '(')) top.depth++;
+      else if (c === (kotlin ? '}' : ')')) {
+        if (top.depth === 0) {
+          stack.pop();
+          i = body(i + 1, i + 1, top.spec);
+          continue;
+        }
+        top.depth--;
+      }
+    }
+    i++;
+  }
+  return regions;
+}
+
+/**
+ * Says if a match `[s, e)` fits the context. A match is "in" a region when it
+ * fits completely, and "touches" it when they share at least one character.
+ */
+function keepRange(context, regions, s, e) {
+  let lo = 0;
+  let hi = regions.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (regions[mid].e <= s) lo = mid + 1;
+    else hi = mid;
+  }
+  let inComment = false;
+  let inString = false;
+  let touchComment = false;
+  let touchString = false;
+  for (let k = lo; k < regions.length && regions[k].s < e; k++) {
+    const r = regions[k];
+    const inside = r.s <= s && e <= r.e;
+    if (r.kind === 'comment') {
+      touchComment = true;
+      inComment ||= inside;
+    } else {
+      touchString = true;
+      inString ||= inside;
+    }
+  }
+  switch (context) {
+    case 'inComments':
+      return inComment;
+    case 'inStrings':
+      return inString;
+    case 'exceptComments':
+      return !touchComment;
+    case 'exceptStrings':
+      return !touchString;
+    case 'exceptCommentsAndStrings':
+      return !touchComment && !touchString;
+    default:
+      return true;
+  }
+}
+
+// --- Find in Files: modules ---------------------------------------------------
+
+const MODULE_FILES = [
+  ['build.gradle', 'gradle'],
+  ['build.gradle.kts', 'gradle'],
+  ['pom.xml', 'maven'],
+  ['package.json', 'npm'],
+  ['Package.swift', 'swift'],
+  ['Cargo.toml', 'cargo'],
+  ['go.mod', 'go'],
+];
+const MODULE_MAX_DEPTH = 6;
+
+const quotedAt = (s) => /^\s*(["'])(.*?)\1/.exec(s)?.[2] ?? null;
+
+function mavenArtifactId(text) {
+  let depth = 0;
+  let i = 0;
+  for (;;) {
+    const at = text.indexOf('<', i);
+    if (at < 0) return null;
+    const rest = text.slice(at);
+    if (rest.startsWith('<!--')) {
+      const e = rest.indexOf('-->');
+      if (e < 0) return null;
+      i = at + e + 3;
+      continue;
+    }
+    if (rest.startsWith('<![CDATA[')) {
+      const e = rest.indexOf(']]>');
+      if (e < 0) return null;
+      i = at + e + 3;
+      continue;
+    }
+    const close = rest.indexOf('>');
+    if (close < 0) return null;
+    const tag = rest.slice(1, close);
+    i = at + close + 1;
+    if (tag.startsWith('?') || tag.startsWith('!')) continue;
+    if (tag.startsWith('/')) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    const selfClosing = tag.endsWith('/');
+    const name = tag.split(/[\s/]/)[0];
+    if (name === 'artifactId' && depth === 1 && !selfClosing) {
+      const end = text.indexOf('<', i);
+      return end < 0 ? null : text.slice(i, end);
+    }
+    if (!selfClosing) depth++;
+  }
+}
+
+async function readModuleName(root, dir, file, kind) {
+  const read = (f) => fsp.readFile(path.join(dir, f), 'utf8').catch(() => null);
+  let name = null;
+  if (kind === 'gradle') {
+    if (dir !== root) return null;
+    for (const f of ['settings.gradle', 'settings.gradle.kts']) {
+      const t = await read(f);
+      for (const line of (t ?? '').split('\n')) {
+        const m = /^\s*rootProject\.name\s*=(.*)$/.exec(line);
+        if (m) name ??= quotedAt(m[1]);
+      }
+      if (name) break;
+    }
+  } else if (kind === 'maven') {
+    name = mavenArtifactId((await read(file)) ?? '');
+  } else if (kind === 'npm') {
+    try {
+      const v = JSON.parse((await read(file)) ?? '');
+      if (typeof v?.name === 'string') name = v.name;
+    } catch {
+      /* broken package.json: use the folder name */
+    }
+  } else if (kind === 'swift') {
+    const t = (await read(file)) ?? '';
+    const p = t.indexOf('Package(');
+    const q = p < 0 ? -1 : t.indexOf('name:', p);
+    if (q >= 0) name = quotedAt(t.slice(q + 5));
+  } else if (kind === 'cargo') {
+    let inPackage = false;
+    for (const raw of ((await read(file)) ?? '').split('\n')) {
+      const line = raw.trim();
+      if (line.startsWith('[')) inPackage = line === '[package]';
+      else if (inPackage) {
+        const m = /^name\s*=(.*)$/.exec(line);
+        if (m) {
+          name = quotedAt(m[1]);
+          break;
+        }
+      }
+    }
+  } else if (kind === 'go') {
+    for (const raw of ((await read(file)) ?? '').split('\n')) {
+      const m = /^module\s+(.*)$/.exec(raw.trim());
+      if (m) {
+        name = quotedAt(m[1]) ?? m[1].trim().split(/\s+/)[0];
+        break;
+      }
+    }
+  }
+  name = name?.trim();
+  return name || null;
+}
+
+/** The modules under `root`, sorted by path. See `searchModules` in src/ipc/search.ts. */
+async function findModules(root) {
+  const best = new Map();
+  for (const rel of await listFiles(root)) {
+    const parts = rel.split('/');
+    const base = parts[parts.length - 1];
+    const rank = MODULE_FILES.findIndex(([f]) => f === base);
+    if (rank < 0 || parts.length - 1 > MODULE_MAX_DEPTH) continue;
+    if (parts.slice(0, -1).includes('node_modules') || parts.includes('.git')) continue;
+    const dir = parts.length > 1 ? path.join(root, ...parts.slice(0, -1)) : root;
+    if (!best.has(dir) || rank < best.get(dir)) best.set(dir, rank);
+  }
+  const out = [];
+  for (const [dir, rank] of best) {
+    const [file, kind] = MODULE_FILES[rank];
+    out.push({ path: dir, name: (await readModuleName(root, dir, file, kind)) ?? path.basename(dir), kind });
+  }
+  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 let searchCounter = 0;
@@ -986,12 +1287,22 @@ async function runTextSearch(c, id, root, o, channel) {
     }
     const inc = (o.include ?? []).map(globToRegExp).filter(Boolean);
     const exc = (o.exclude ?? []).map(globToRegExp).filter(Boolean);
-    const files = (await listFiles(root)).sort();
+    const context = o.context ?? 'anywhere';
+    // With `paths` we search exactly these files, in this order. No folder walk.
+    const byPaths = Array.isArray(o.paths) && o.paths.length > 0;
+    const files = byPaths
+      ? o.paths.map((p) => {
+          const rel = path.relative(root, p).split(path.sep).join('/');
+          return rel.startsWith('../') || rel === '..' ? p : rel;
+        })
+      : (await listFiles(root)).sort();
     for (const rel of files) {
       if (state.cancelled || total >= limit) break;
       if (inc.length && !inc.some((r) => r.test(rel))) continue;
       if (exc.some((r) => r.test(rel))) continue;
-      const abs = path.join(root, rel);
+      const abs = byPaths ? path.resolve(o.paths[files.indexOf(rel)] ?? rel) : path.join(root, rel);
+      const lang = CONTEXT_LANGS[path.extname(rel).slice(1).toLowerCase()];
+      if (!lang && (context === 'inComments' || context === 'inStrings')) continue;
       let buf;
       try {
         const st = await fsp.stat(abs);
@@ -1000,15 +1311,24 @@ async function runTextSearch(c, id, root, o, channel) {
       } catch {
         continue;
       }
-      if (buf.subarray(0, BINARY_CHECK_BYTES).includes(0)) continue;
-      const lines = buf.toString('utf8').split('\n');
+      if (buf.includes(0)) continue;
+      const fileText = buf.toString('utf8');
+      const lines = fileText.split('\n');
       const matches = [];
+      // Regions are computed once, when the first match needs them.
+      let regions = null;
+      let base = 0;
+      const keep =
+        lang && context !== 'anywhere'
+          ? (s, e) => keepRange(context, (regions ??= scanRegions(lang, fileText)), base + s, base + e)
+          : null;
       for (let i = 0; i < lines.length; i++) {
         if (total >= limit) {
           truncated = true;
           break;
         }
-        const lm = makeLineMatch(i + 1, lines[i], re);
+        const lm = makeLineMatch(i + 1, lines[i], re, keep);
+        base += lines[i].length + 1;
         if (lm) {
           matches.push(lm);
           total++;
@@ -1068,6 +1388,9 @@ const searchCommands = {
     c.searches.set(id, { cancelled: false });
     void runTextSearch(c, id, abs, options, channel);
     return id;
+  },
+  async search_modules({ root }) {
+    return findModules(await rootDirOrThrow(root));
   },
   async search_cancel({ id }, c) {
     const s = c.searches.get(id);
@@ -2138,6 +2461,8 @@ const CODE_COMMANDS = [
   'code_diagram',
   'code_usages',
   'code_callers',
+  'code_find_types',
+  'code_find_symbols',
 ];
 
 /** Sends one command to the dev_http server. No timeout: an index build can take long. */

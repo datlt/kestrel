@@ -1,0 +1,154 @@
+/* Search Everywhere popup. Colors come from the theme variables only. */
+
+.goto-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 8cqh;
+}
+.goto-backdrop [hidden] { display: none !important; }
+
+.goto-box {
+  position: relative;
+  width: clamp(500px, 60%, 900px);
+  max-width: calc(100% - 32px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  animation: shell-pop 0.12s ease-out;
+}
+
+.goto-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+.goto-tabs { display: flex; flex: 1; gap: 2px; min-width: 0; overflow: hidden; }
+.goto-tab {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.goto-tab:hover { background: var(--hover); color: var(--fg); }
+.goto-tab.goto-on { background: var(--active); color: var(--fg); font-weight: 600; }
+
+.goto-filter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.goto-filter:hover { background: var(--hover); color: var(--fg); }
+.goto-filter.goto-on { color: var(--accent); }
+.goto-filter svg { width: 14px; height: 14px; }
+
+.goto-field { position: relative; padding: 8px; }
+.goto-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  outline: none;
+}
+.goto-input:focus { border-color: var(--focus-ring); }
+.goto-busy { position: absolute; left: 8px; right: 8px; bottom: 6px; height: 2px; overflow: hidden; opacity: 0; transition: opacity 0.1s; pointer-events: none; }
+.goto-busy.goto-on { opacity: 1; }
+.goto-busy::before { content: ''; position: absolute; top: 0; bottom: 0; width: 30%; background: var(--accent); animation: shell-busy 1s ease-in-out infinite; }
+
+/* filter menu */
+.goto-menu {
+  position: absolute;
+  top: 34px;
+  right: 8px;
+  z-index: 2;
+  width: 220px;
+  max-height: 60cqh;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+.goto-menu-title { padding: 6px 8px 2px; font-size: 11px; text-transform: uppercase; color: var(--fg-faint); }
+.goto-menu-item { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: var(--radius); cursor: pointer; }
+.goto-menu-item:hover { background: var(--hover); }
+.goto-menu-item.goto-on { color: var(--accent); }
+.goto-check { flex: none; width: 14px; text-align: center; }
+.goto-menu-sep { height: 1px; margin: 4px 0; background: var(--border); }
+.goto-menu-reset { color: var(--fg-muted); }
+
+/* list */
+.goto-list { position: relative; overflow-x: hidden; overflow-y: auto; border-top: 1px solid var(--border); }
+.goto-spacer-box { position: relative; width: 100%; }
+.goto-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.goto-row.goto-active { background: var(--active); }
+.goto-header { cursor: default; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--fg-faint); }
+.goto-more { color: var(--fg-muted); }
+.goto-icon { flex: none; display: flex; align-items: center; }
+.goto-icon > * { width: 16px; height: 16px; }
+.goto-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.goto-code { font-family: var(--font-mono); font-size: 12px; }
+.goto-sub, .goto-params { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--fg-muted); }
+.goto-params { flex: 0 1 auto; margin-left: -4px; }
+.goto-spacer { flex: 1 0 0; }
+.goto-hl { font-weight: 700; color: var(--accent); }
+.goto-badge, .goto-tag, .goto-key {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--fg-muted);
+}
+.goto-tag { color: var(--warn); }
+.goto-where { flex: none; font-size: 12px; color: var(--fg-muted); }
+
+/* kind colors */
+.goto-k-class, .goto-k-object, .goto-k-struct, .goto-k-record { color: var(--accent); }
+.goto-k-interface, .goto-k-protocol, .goto-k-actor { color: var(--ok); }
+.goto-k-enum, .goto-k-enumCase, .goto-k-annotation, .goto-k-typeAlias, .goto-k-extension { color: var(--warn); }
+.goto-k-method, .goto-k-function, .goto-k-constructor { color: var(--info); }
+.goto-k-field, .goto-k-property, .goto-k-variable { color: var(--fg-muted); }
+.goto-k-action { color: var(--warn); }
+.goto-k-muted { color: var(--fg-faint); }
+
+.goto-status { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-muted); }
+.goto-status.goto-error { color: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .goto-box, .goto-busy::before { animation: none; }
+}

@@ -3,10 +3,12 @@
 
 mod fuzzy;
 mod index;
+mod modules;
 mod store;
 mod text;
 mod walk;
 
 pub use fuzzy::{FileHit, QueryResult};
 pub use index::{FileIndex, IndexManager, IndexState, IndexStatus, ReadyListener};
-pub use text::{search_text, FileMatches, LineMatch, TextOptions, TextSummary};
+pub use modules::{search_modules, ModuleKind, SearchModule};
+pub use text::{search_text, FileMatches, LineMatch, SearchContext, TextOptions, TextSummary};

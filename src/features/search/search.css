@@ -197,3 +197,34 @@
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+
+.search-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.search-chip-row[hidden] {
+  display: none;
+}
+
+.search-chip {
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: var(--active);
+  color: var(--fg);
+  font-size: 11px;
+}
+
+.search-chip-clear {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.search-chip-clear:hover {
+  color: var(--fg);
+}

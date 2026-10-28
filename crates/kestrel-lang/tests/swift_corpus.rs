@@ -138,6 +138,31 @@ fn corpus() {
     }
     println!("members checked for end_line: {checked}, bad: {bad}");
     assert_eq!(bad, 0);
+    // Regions: sorted, inside the text, on char boundaries, no hit inside.
+    let mut nregions = 0usize;
+    for (path, text) in &texts {
+        let r = regions(Lang::Swift, text);
+        let mut last = 0;
+        for x in &r {
+            assert!(x.start >= last && x.end > x.start && x.end <= text.len(), "{}", path.display());
+            assert!(text.is_char_boundary(x.start) && text.is_char_boundary(x.end), "{}", path.display());
+            last = x.end;
+        }
+        nregions += r.len();
+        for name in ["self", "String", "Foo", "id"] {
+            for h in find_identifiers(Lang::Swift, text, name) {
+                let k = r.partition_point(|x| x.end <= h.start);
+                assert!(k >= r.len() || r[k].start >= h.end, "hit {name} in region: {}", path.display());
+            }
+        }
+    }
+    println!("regions: {nregions}, all checks passed");
+    let start = Instant::now();
+    for (_, text) in &texts {
+        let _ = regions(Lang::Swift, text);
+    }
+    let secs = start.elapsed().as_secs_f64();
+    println!("regions only: {secs:.3}s, {:.1} MB/s", mb / secs);
     // Parse only, for the speed of `parse` alone.
     let start = Instant::now();
     for (_, text) in &texts {

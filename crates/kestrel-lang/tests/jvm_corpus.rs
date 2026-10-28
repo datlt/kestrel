@@ -3,7 +3,7 @@
 //! `KESTREL_LANG_CORPUS=/path cargo test --release -p kestrel-lang --test jvm_corpus -- --nocapture`
 //! The name for `find_identifiers` comes from `KESTREL_LANG_CORPUS_NAME` (default `String`).
 
-use kestrel_lang::{find_identifiers, parse, Lang};
+use kestrel_lang::{find_identifiers, parse, regions, Lang};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -83,11 +83,40 @@ fn corpus() {
     }
     let secs_find = t1.elapsed().as_secs_f64();
 
+    // Regions: speed and checks.
+    let mut region_count = 0usize;
+    let t2 = Instant::now();
+    let all: Vec<_> = files.iter().map(|(_, lang, text)| regions(*lang, text)).collect();
+    let secs_regions = t2.elapsed().as_secs_f64();
+    let mut bad_regions = 0usize;
+    for ((p, lang, text), rs) in files.iter().zip(&all) {
+        region_count += rs.len();
+        let mut last = 0usize;
+        for r in rs {
+            if r.start < last || r.end <= r.start || r.end > text.len() || !text.is_char_boundary(r.start) || !text.is_char_boundary(r.end) {
+                bad_regions += 1;
+            }
+            last = r.end;
+        }
+        // No hit of a common name may lie inside a region.
+        for h in find_identifiers(*lang, text, &name) {
+            let k = rs.partition_point(|r| r.end <= h.start);
+            if rs.get(k).is_some_and(|r| r.start < h.end) {
+                bad_regions += 1;
+                if bad_regions <= 5 {
+                    println!("  hit inside region: {}", p.display());
+                }
+            }
+        }
+    }
+
     let mb = bytes as f64 / 1_000_000.0;
     println!("files: {}", files.len());
     println!("size: {mb:.1} MB");
     println!("parse: {secs:.3} s, {:.0} MB/s", mb / secs.max(1e-9));
     println!("find_identifiers({name}): {secs_find:.3} s, {:.0} MB/s, {hits} hits", mb / secs_find.max(1e-9));
+    println!("regions: {secs_regions:.3} s, {:.0} MB/s, {region_count} regions, {bad_regions} problems", mb / secs_regions.max(1e-9));
+    assert_eq!(bad_regions, 0);
     println!("types: {types}");
     println!("members with a bad end_line: {bad_lines}");
     assert_eq!(bad_lines, 0);

@@ -57,6 +57,49 @@ export interface TextSearchOptions {
   exclude: string[];
   /** 0 = no limit. */
   maxResults: number;
+  /**
+   * Search only these files (absolute paths), for the scopes "Open Files",
+   * "Changed Files" and "Current File". The folder walk is skipped; include
+   * and exclude still apply. `.gitignore` is not applied to named files.
+   * Missing files, folders and binary files are skipped. Not set or empty:
+   * walk the root.
+   */
+  paths?: string[];
+  /**
+   * Where a match may be (Kotlin, Java and Swift files). A match "in" a
+   * comment or string fits inside it; the `except...` filters drop matches
+   * that touch one. Other files: `anywhere` and the `except...`
+   * filters keep all their matches, `inComments` and `inStrings` skip them.
+   * Default `anywhere`.
+   */
+  context?: SearchContext;
+}
+
+export type SearchContext =
+  | 'anywhere'
+  | 'inComments'
+  | 'inStrings'
+  | 'exceptComments'
+  | 'exceptStrings'
+  | 'exceptCommentsAndStrings';
+
+export interface SearchModule {
+  /** Absolute folder of the module. */
+  path: string;
+  /** Folder name, or the name from the build file when it is easy to read (`rootProject.name`, `<artifactId>`, `"name"` of package.json). */
+  name: string;
+  kind: 'gradle' | 'maven' | 'npm' | 'swift' | 'cargo' | 'go';
+}
+
+/**
+ * The modules of a folder for the "Module" scope, one entry per folder (with
+ * several build files: gradle, maven, npm, swift, cargo, go, in this order);
+ * the root folder is included. Folders (at most 6 levels
+ * deep, ignored folders skipped) with `build.gradle(.kts)`, `pom.xml`,
+ * `package.json`, `Package.swift`, `Cargo.toml` or `go.mod`. Sorted by path.
+ */
+export function searchModules(root: string): Promise<SearchModule[]> {
+  return invoke<SearchModule[]>('search_modules', { root });
 }
 
 export interface LineMatch {

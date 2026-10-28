@@ -7,6 +7,7 @@
 mod callers;
 mod cmodel;
 mod derived;
+mod find;
 mod diagram;
 mod index;
 mod manager;
@@ -17,12 +18,14 @@ mod walk;
 
 pub use index::Index;
 pub use manager::CodeManager;
+pub use find::{FindRequest, FindResult, SymbolHit, SymbolKindOut, TypeHit};
 pub use types::*;
 
 #[doc(hidden)]
 pub mod internals {
     pub use crate::cmodel::*;
     pub use crate::derived::*;
+    pub use crate::find::{match_name, Pattern, Query, Scratch};
     pub use crate::diagram::run as run_diagram;
     pub use crate::index::*;
     pub use crate::textutil::*;

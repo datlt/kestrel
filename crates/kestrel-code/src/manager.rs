@@ -1,6 +1,7 @@
 //! One index per root, shared by the windows that use the root.
 
 use crate::diagram;
+use crate::find::{FindRequest, FindResult, SymbolHit, TypeHit};
 use crate::index::{build_index, update_index, Index};
 use crate::types::*;
 use crate::usages;
@@ -242,5 +243,17 @@ impl CodeManager {
             t.path = norm_str(&t.path);
         }
         crate::callers::run(&index, &req, cancel)
+    }
+
+    pub fn find_types(&self, owner: &str, req: &FindRequest, cancel: &AtomicBool) -> Result<FindResult<TypeHit>> {
+        let r = self.acquire(owner, &req.root)?;
+        let index = self.index_of(&r, cancel)?;
+        crate::find::find_types(&index, req, status_of(&index), cancel)
+    }
+
+    pub fn find_symbols(&self, owner: &str, req: &FindRequest, cancel: &AtomicBool) -> Result<FindResult<SymbolHit>> {
+        let r = self.acquire(owner, &req.root)?;
+        let index = self.index_of(&r, cancel)?;
+        crate::find::find_symbols(&index, req, status_of(&index), cancel)
     }
 }

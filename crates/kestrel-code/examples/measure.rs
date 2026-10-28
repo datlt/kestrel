@@ -152,5 +152,26 @@ fn main() {
             }
         }
     }
+    // Go to Class and Go to Symbol.
+    let members: usize = index.files.iter().map(|f| f.model.types.iter().map(|t| t.fields.len() + t.methods.len()).sum::<usize>() + f.model.top_level.len()).sum();
+    println!("find: {} types, {} members", index.type_count, members);
+    let ask = |q: &str, symbols: bool| {
+        let req = FindRequest { root: root_s.clone(), query: q.into(), limit: None, exclude_tests: false, langs: vec![] };
+        let t = Instant::now();
+        let (n, first, trunc) = if symbols {
+            let r = m.find_symbols("w", &req, &cancel).unwrap();
+            (r.items.len(), r.items.first().map(|h| format!("{}.{}", h.owner_name, h.name)), r.truncated)
+        } else {
+            let r = m.find_types("w", &req, &cancel).unwrap();
+            (r.items.len(), r.items.first().map(|h| h.qualified.clone()), r.truncated)
+        };
+        println!("  {} {:<22} {:>9.2?}  {} items, truncated {}, first {:?}", if symbols { "symbols" } else { "types  " }, format!("{q:?}"), t.elapsed(), n, trunc, first);
+    };
+    for q in ["a", "Se", "Book", "NABS", "newArrival service", "*Repository", "Book*Mapper", "cart.Service", "MemberService", "Mapper "] {
+        ask(q, false);
+    }
+    for q in ["a", "get", "selectOne", "MS.sel", "Member#find", "findBy", "setAutoPlay", "fetch"] {
+        ask(q, true);
+    }
     println!("rss at the end {:.0} MB", rss_mb());
 }

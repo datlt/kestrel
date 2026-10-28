@@ -38,3 +38,16 @@ pub fn find_identifiers(lang: Lang, text: &str, name: &str) -> Vec<IdentHit> {
         Lang::Swift => swift::find_identifiers(text, name),
     }
 }
+
+/// The comments and string literals of a text, sorted by `start`, without
+/// overlaps. Find in Files uses them for the filters "in comments", "in
+/// string literals" and "except comments". It must be as fast as
+/// `find_identifiers` and never fail: an unclosed comment or string ends at
+/// the end of the text.
+pub fn regions(lang: Lang, text: &str) -> Vec<Region> {
+    match lang {
+        Lang::Kotlin => kotlin::regions(text),
+        Lang::Java => java::regions(text),
+        Lang::Swift => swift::regions(text),
+    }
+}

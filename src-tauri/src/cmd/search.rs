@@ -3,7 +3,10 @@
 
 use super::{Handler, SetupResult};
 use kestrel_common::{Error, Result};
-use kestrel_search::{search_text as run_text_search, FileMatches, IndexManager, IndexStatus, QueryResult, TextOptions};
+use kestrel_search::{
+    search_modules as run_search_modules, search_text as run_text_search, FileMatches, IndexManager, IndexStatus,
+    QueryResult, SearchModule, TextOptions,
+};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -144,6 +147,13 @@ async fn search_text(
     Ok(id)
 }
 
+/// Lists the modules of a folder (Gradle, Maven, npm, SwiftPM, Cargo, Go) for the "Module" scope.
+#[tauri::command]
+async fn search_modules(root: String) -> Result<Vec<SearchModule>> {
+    let root = root_path(&root)?;
+    tauri::async_runtime::spawn_blocking(move || run_search_modules(&root)).await.map_err(join_error)?
+}
+
 #[tauri::command]
 fn search_cancel(state: State<'_, SearchState>, id: u64) {
     if let Some((_, flag)) = state.running.lock().get(&id) {
@@ -157,6 +167,7 @@ pub fn handler() -> Handler {
         search_index_status,
         search_index_update,
         search_text,
+        search_modules,
         search_cancel
     ])
 }

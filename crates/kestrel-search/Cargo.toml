@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 kestrel-common = { workspace = true }
+kestrel-lang = { workspace = true }
+serde_json = { workspace = true }
 serde = { workspace = true }
 parking_lot = { workspace = true }
 log = { workspace = true }

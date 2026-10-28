@@ -250,4 +250,11 @@ fn highlighter_sets_region_highlight() {
 
     let e = z.region_highlight("zzz_no_such_cmd_1 --flag | cat > out.txt && ls");
     assert_eq!(e, ["0 17 fg=red", "18 24 fg=cyan", "27 30 fg=green", "44 46 fg=green"], "entries were {e:?}");
+
+    // Words with characters that are special in math (`!!`, `[`, `$((`) once
+    // printed "bad math expression" on every key. They must give no output.
+    let e = z.region_highlight("!! | xxd | head -2");
+    assert_eq!(e, ["0 2 fg=red", "5 8 fg=green", "11 15 fg=green", "16 18 fg=cyan"], "entries were {e:?}");
+    let e = z.region_highlight("[ -n x ] && a[1]=2 echo");
+    assert!(!e.is_empty(), "entries were {e:?}");
 }

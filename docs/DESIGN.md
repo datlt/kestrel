@@ -228,7 +228,7 @@ Use these ids and keys. `Mod` = Cmd on macOS, Ctrl elsewhere. Keys marked
 | `workbench.reopenClosedTab` | Mod-Shift-t | shell |
 | `workbench.nextTab` / `workbench.prevTab` | Ctrl-Tab / Ctrl-Shift-Tab | shell |
 | `workbench.showExplorer` | Mod-Shift-e | shell |
-| `workbench.showSearch` | Mod-Shift-f | shell → runs `search.findInFiles` |
+| `workbench.showSearch` | (palette) | shell → runs `search.showFindWindow` (sidebar Search view) |
 | `workbench.showGit` | Ctrl-Shift-g | shell |
 | `view.zoomIn` / `view.zoomOut` / `view.zoomReset` | Mod-=, Mod-Shift-= / Mod-- / Mod-0 | shell (calls active tab `zoom()`, else `ctx.editors.zoom()`) |
 | `view.uiZoomIn` / `view.uiZoomOut` / `view.uiZoomReset` | Mod-Alt-= / Mod-Alt-- / Mod-Alt-0 | shell |
@@ -253,7 +253,9 @@ Use these ids and keys. `Mod` = Cmd on macOS, Ctrl elsewhere. Keys marked
 | `explorer.revealActiveFile` | (palette) | files |
 | `explorer.newFile` / `explorer.newFolder` / `explorer.rename` / `explorer.delete` | in explorer: F2 rename, Delete / Mod-Backspace delete | files |
 | `search.quickOpen` | Mod-p | search |
-| `search.findInFiles` | (via Mod-Shift-f) | search |
+| `search.findInFiles` | Mod-Shift-f (macOS also Ctrl-Shift-f) | search (popup, 13.2) |
+| `search.replaceInFiles` | Mod-Shift-r (macOS also Ctrl-Shift-r) | search (popup, 13.3) |
+| `goto.everywhere` / `goto.class` / `goto.symbol` / `goto.action` | Shift Shift / Mod-Shift-o (macOS also Ctrl-Shift-o) / Mod-Alt-o, Mod-t / Mod-Shift-a | goto |
 | `git.refresh` | (palette) | git |
 | `git.openChanges` | Mod-Alt-d | git (diff of the active file) |
 | `git.compareWithBranch` | (palette) | git |
@@ -262,7 +264,7 @@ Use these ids and keys. `Mod` = Cmd on macOS, Ctrl elsewhere. Keys marked
 | `lsp.findReferences` | Shift-F12 | lsp, editor |
 | `lsp.rename` | F2 | lsp, editor |
 | `lsp.format` | Shift-Alt-f | lsp, editor |
-| `lsp.workspaceSymbols` | Mod-t | lsp |
+| `lsp.workspaceSymbols` | (palette; Mod-t is `goto.symbol`) | lsp |
 | `lsp.restart` | (palette) | lsp |
 | `usages.find` | Alt-F7 (Shift-F12 without a ready server) | usages |
 | `usages.next` / `usages.prev` | F4 / Shift-F4 | usages |
@@ -1050,3 +1052,100 @@ Language notes:
   composition edits the composition only. UTF-8 output is decoded as a stream.
 - Hidden command `terminal.run` (`{ command, title?, cwd? }`): opens a new
   terminal tab and runs the command in it.
+
+## 13. Round 7: Find in Files and Search Everywhere (like IntelliJ)
+
+### 13.1 Ownership
+
+| Area | Owner | Files |
+|------|-------|-------|
+| `regions` in the parsers | lang-jvm, lang-swift | as in 11.1 |
+| Type and symbol search | code-index | as in 11.1 (`code_find_types`, `code_find_symbols`) |
+| Search backend | search-backend | `crates/kestrel-search/**`, `src-tauri/src/cmd/search.rs`, the `search_*` part of `scripts/dev-bridge.mjs` |
+| Find in Files UI | search-ui | `src/features/search/**` |
+| Search Everywhere UI | goto | `src/features/goto/**`, the `lsp.workspaceSymbolsQuery` hidden command and the Mod-t binding in `src/features/lsp/index.ts` |
+| Contracts and wiring | integrator | `src/ipc/search.ts`, `src/ipc/code.ts`, `kestrel-lang` `lib.rs`/`model.rs`, `workbench.ts` |
+
+Keys: on macOS `Mod` is Cmd. The user also asked for the Ctrl forms, so on
+macOS the commands also get `Ctrl-Shift-f`, `Ctrl-Shift-r` and
+`Ctrl-Shift-o` (on other systems they are the same keys).
+
+### 13.2 Find in Files popup (`search.findInFiles`, Mod-Shift-f)
+
+- A popup over the editor area (inside the workbench root, sends
+  `overlay:changed`), centered, movable by its header and resizable by its
+  edges and corners; size and place are kept in `globalState`. It keeps its
+  state (query, options, scope, results, selection, scroll) until the next
+  search, so opening it again shows the last results at once.
+- Header: "Find in Files", the counts ("1,234 matches in 87 files", "+"
+  when the limit cut them), a pin button (keeps the popup open when it
+  loses focus), and a button "Open in Find Window" (Mod-Enter): the sidebar
+  Search view gets the same query, options and results.
+- Query field: starts with the editor selection (one line) or the last
+  query; history of the last 30 queries (Alt-Down or the clock button).
+  Toggles with keys that use `KeyboardEvent.code` (so they work on macOS
+  with Alt): Match Case (Alt-C), Words (Alt-O), Regex (Alt-X). A wrong
+  regex shows its error under the field.
+- File mask: a check box and a field with history (`*.kt, *.java`,
+  `!*Test.kt` to exclude).
+- Filter menu (funnel icon): Anywhere, In Comments, In String Literals,
+  Except Comments, Except String Literals, Except Comments and String
+  Literals (`context`).
+- Scope tabs: In Project; Module (a drop-down of `searchModules`);
+  Directory (a path field with the folder of the active file at first, a
+  "Recursive" toggle, and a Choose button); Scope (Open Files, Changed
+  Files from `git:decorations`, Current File, Production Files, Test
+  Files: test files use the rule of `CallerNode.test`, written as globs).
+- Results: a virtualized list (one row per match: the line text with the
+  matches in bold, the file name and line number on the right; a group by
+  file toggle). Up and Down move; the preview shows the selection.
+- Preview: a read-only CodeMirror view under the list (resizable split)
+  with syntax colors, every match of the file marked and the selected one
+  stronger, scrolled to it, with the file path above it. Double click in the
+  preview or Enter in the list opens the file at the match and closes the
+  popup (unless pinned). Mod-Enter in the list opens it and keeps the popup.
+- Search runs as you type (debounced 150 ms, the old search is cancelled),
+  streams results, and stops at `search.maxResults`.
+
+### 13.3 Replace in Files (`search.replaceInFiles`, Mod-Shift-r)
+
+- The same popup with a Replace field (history too) and a Preserve Case
+  toggle. Rows show the old text struck through and the new text. Exclude
+  a match or a file from the replace with the X button or Delete; excluded
+  rows are grey. Buttons: Replace (the selected match), Replace All (asks
+  "Replace N matches in M files?").
+- The replacement uses JavaScript `RegExp` on the current text (`$1`,
+  `$<name>`, `$&`, `\n` in regex mode). Open files change through their
+  editor (one undoable transaction per file, then the normal auto save);
+  other files are read and written through `src/ipc/fs.ts` with their
+  encoding, BOM and line endings kept and `expectedMtimeMs` set, so a file
+  that changed on disk is skipped and listed. After the replace the search
+  runs again.
+
+### 13.4 Search Everywhere (`src/features/goto/**`)
+
+- A popup at the top of the editor area like IntelliJ, with the tabs All,
+  Classes, Files, Symbols, Actions, Text. Tab and Shift-Tab switch tabs.
+  Commands: `goto.everywhere` (Shift pressed twice), `goto.class`
+  (Mod-Shift-o, opens the Classes tab), `goto.symbol` (Mod-Alt-o and Mod-t),
+  `goto.action` (Mod-Shift-a). Mod-p stays the quick open of files.
+- Each tab remembers its last query (selected, so typing replaces it). The
+  query starts with the editor selection when it is one short line.
+- Classes: `codeFindTypes`; rows: kind icon (class, interface, enum,
+  object, record, annotation, struct, protocol, actor), the name with the
+  matches in bold, the container in grey, a language badge, a "test" tag.
+  For languages that the index does not read (TypeScript and others), the
+  results of `lsp.workspaceSymbolsQuery` with class-like kinds are added
+  when a server is ready. Filter menu: kinds, languages, "Hide test code".
+- Symbols: `codeFindSymbols` plus LSP symbols; rows: kind icon, `name(params)`,
+  `: type`, the owner in grey.
+- Files: `searchFiles` (the file index of the search feature).
+- Actions: the commands of `ctx.commands` with their key labels.
+- Text: a short `searchText` (first 100 matches) with "Open in Find
+  Window" to continue in the Find in Files popup.
+- All: the best 5 of Classes, Files, Symbols and Actions, with a header
+  per group and "more" that switches to that tab.
+- `Name:42` or `Name:42:7` opens at that line. Enter opens, Shift-Enter
+  opens in the background, Escape closes. Results arrive while you type
+  (debounced 80 ms, stale requests cancelled with `codeCancel`). The first
+  use shows "Reading the project's files..." while the index builds.

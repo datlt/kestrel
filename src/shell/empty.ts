@@ -6,7 +6,7 @@ import type { AppContext, Command } from '../core/types';
 const HINTS: [string, string][] = [
   ['workbench.commandPalette', 'Command Palette'],
   ['search.quickOpen', 'Go to File'],
-  ['workbench.showSearch', 'Find in Files'],
+  ['search.findInFiles', 'Find in Files'],
   ['workbench.toggleSidebar', 'Toggle Sidebar'],
   ['workspace.openFolder', 'Open Folder'],
   ['file.newDraft', 'New Draft'],

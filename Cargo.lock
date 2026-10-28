@@ -2558,11 +2558,13 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "kestrel-common",
+ "kestrel-lang",
  "log",
  "nucleo-matcher",
  "parking_lot",
  "rayon",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

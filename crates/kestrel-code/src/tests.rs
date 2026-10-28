@@ -616,6 +616,254 @@ fn max_fan_can_be_changed() {
     assert_eq!(j.max_fan, Some(99));
 }
 
+// --- Go to class and go to symbol ------------------------------------------------
+
+fn pm(pat: &str, name: &str) -> Option<Vec<u16>> {
+    let ends = pat.ends_with(' ');
+    let p = internals::Pattern::new(pat.trim_end(), ends);
+    internals::match_name(&p, name, &mut internals::Scratch::default()).map(|m| m.idx)
+}
+
+#[test]
+fn matcher_camel_humps_words_and_case() {
+    let n = "NewArrivalBookService";
+    assert_eq!(pm("NABS", n), Some(vec![0, 3, 10, 14]));
+    assert_eq!(pm("NewArrBS", n), Some(vec![0, 1, 2, 3, 4, 5, 10, 14]));
+    assert_eq!(pm("newArrival service", n), Some(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17, 18, 19, 20]));
+    assert_eq!(pm("newarrival", n), Some((0..10).collect::<Vec<_>>()), "lower case letters match any case");
+    assert_eq!(pm("service", n), Some((14..21).collect::<Vec<_>>()), "a word in the middle");
+    assert_eq!(pm("nabs", n), Some(vec![0, 3, 10, 14]), "lower-case letters jump to humps too");
+    assert_eq!(pm("npe", "NullPointerException"), Some(vec![0, 4, 11]));
+    assert_eq!(pm("mserv", "MemberService"), Some(vec![0, 6, 7, 8, 9]));
+    assert_eq!(pm("nax", n), None);
+    assert_eq!(pm("bs", n), Some(vec![10, 14]), "the first letter is at a hump");
+    assert_eq!(pm("NABX", n), None);
+    assert_eq!(pm("Service", "Reservation"), None, "an upper-case letter must start a hump");
+    assert_eq!(pm("ook", "Book"), None, "a name part starts at a hump");
+    assert_eq!(pm("BOOK", "Book"), None, "upper-case letters need humps");
+    assert_eq!(pm("HS", "HTTPServer"), Some(vec![0, 4]), "acronyms end at a hump");
+    assert_eq!(pm("snake", "my_snake_case"), Some(vec![3, 4, 5, 6, 7]), "underscore starts a word");
+    assert_eq!(pm("a b", "AbcBcd"), Some(vec![0, 3]));
+}
+
+#[test]
+fn matcher_wildcard_and_trailing_space() {
+    assert_eq!(pm("*Repository", "BookRepository"), Some((4..14).collect::<Vec<_>>()));
+    assert!(pm("*Repository", "Repository").is_some());
+    assert!(pm("Book*Mapper", "BookCommentMapper").is_some());
+    assert!(pm("Book*Mapper", "BookMapper").is_some());
+    assert!(pm("Book*Mapper", "BookCommentService").is_none());
+    assert_eq!(pm("*ook", "Book"), Some(vec![1, 2, 3]), "after a wildcard any position works");
+    assert!(pm("Book ", "Book").is_some());
+    assert!(pm("Book ", "BookMapper").is_none(), "a trailing space ends the name");
+    assert!(pm("Book* ", "BookMapper").is_some(), "a wildcard before the space frees the end");
+}
+
+#[test]
+fn matcher_non_ascii_and_utf16() {
+    assert_eq!(pm("éS", "ÉcoleService"), Some(vec![0, 5]));
+    assert_eq!(pm("日本", "日本語Service"), Some(vec![0, 1]));
+    assert_eq!(pm("本", "日本語Service"), None, "letters without case have no humps inside a word");
+    assert_eq!(pm("日本語S", "日本語Service"), Some(vec![0, 1, 2, 3]));
+    // Indexes in UTF-16 units: the emoji takes two.
+    let i = index(vec![file("/p/E.kt", Lang::Kotlin, "p", vec![], vec![ty("A😀B", TypeKind::Class)])]);
+    let r = crate::find::find_types(&i, &find_req("AB"), status(), &AtomicBool::new(false)).unwrap();
+    assert_eq!(r.items[0].name_matches, vec![0, 3]);
+    let r = crate::find::find_types(&i, &find_req("A😀"), status(), &AtomicBool::new(false)).unwrap();
+    assert_eq!(r.items[0].name_matches, vec![0, 1, 2]);
+}
+
+fn find_req(q: &str) -> crate::FindRequest {
+    crate::FindRequest { root: "/p".into(), query: q.into(), limit: None, exclude_tests: false, langs: vec![] }
+}
+
+fn names(r: &crate::FindResult<crate::TypeHit>) -> Vec<String> {
+    r.items.iter().map(|h| h.qualified.clone()).collect()
+}
+
+fn find_index() -> Arc<Index> {
+    let mut outer = ty("Outer", TypeKind::Class);
+    outer.end_line = 10;
+    let mut inner = ty("Inner", TypeKind::Class);
+    inner.outer = Some(0);
+    index(vec![
+        file("/p/a/Book.kt", Lang::Kotlin, "a", vec![], vec![ty("Book", TypeKind::Class)]),
+        file("/p/b/BOOK.kt", Lang::Kotlin, "b", vec![], vec![ty("BOOK", TypeKind::Class)]),
+        file("/p/a/BookSelect.kt", Lang::Kotlin, "a", vec![], vec![ty("BookSelect", TypeKind::Class)]),
+        file("/p/a/BookMapper.kt", Lang::Kotlin, "a", vec![], vec![ty("BookMapper", TypeKind::Class)]),
+        file("/p/src/test/BookMapper.kt", Lang::Kotlin, "t", vec![], vec![ty("BookMapper", TypeKind::Class)]),
+        file("/p/a/BigMap.kt", Lang::Kotlin, "a", vec![], vec![ty("BigMap", TypeKind::Class)]),
+        file("/p/a/NewBook.kt", Lang::Kotlin, "a", vec![], vec![ty("NewBook", TypeKind::Class)]),
+        file("/p/a/Other.kt", Lang::Kotlin, "jp.shop.cart", vec![], vec![ty("CartService", TypeKind::Class)]),
+        file("/p/a/Other2.kt", Lang::Kotlin, "jp.shop.order", vec![], vec![ty("OrderService", TypeKind::Class)]),
+        file("/p/a/Outer.kt", Lang::Kotlin, "x", vec![], vec![outer, inner]),
+        file("/p/J.java", Lang::Java, "j", vec![], vec![ty("BookJava", TypeKind::Class)]),
+    ])
+}
+
+#[test]
+fn find_types_ranking_order() {
+    let i = find_index();
+    let c = AtomicBool::new(false);
+    let r = crate::find::find_types(&i, &find_req("Book"), status(), &c).unwrap();
+    assert_eq!(
+        names(&r),
+        vec!["a.Book", "b.BOOK", "j.BookJava", "a.BookMapper", "a.BookSelect", "t.BookMapper", "a.NewBook"],
+        "exact, exact ignoring case, prefix (short names first, then tests last), then a hump in the middle"
+    );
+    assert!(r.items[5].test && !r.items[3].test);
+    assert!(!r.truncated);
+    // Humps: fewer skipped characters first.
+    let r = crate::find::find_types(&i, &find_req("BM"), status(), &c).unwrap();
+    assert_eq!(names(&r), vec!["a.BigMap", "a.BookMapper", "t.BookMapper"]);
+    assert_eq!(r.items[0].name_matches, vec![0, 3]);
+    // Limit and truncated.
+    let mut req = find_req("Book");
+    req.limit = Some(2);
+    let r = crate::find::find_types(&i, &req, status(), &c).unwrap();
+    assert_eq!(names(&r), vec!["a.Book", "b.BOOK"]);
+    assert!(r.truncated);
+    // Tests and languages.
+    let mut req = find_req("BookMapper");
+    req.exclude_tests = true;
+    assert_eq!(names(&crate::find::find_types(&i, &req, status(), &c).unwrap()), vec!["a.BookMapper"]);
+    let mut req = find_req("Book");
+    req.langs = vec![CodeLang::Java];
+    assert_eq!(names(&crate::find::find_types(&i, &req, status(), &c).unwrap()), vec!["j.BookJava"]);
+    assert!(crate::find::find_types(&i, &find_req(""), status(), &c).unwrap().items.is_empty());
+    assert!(crate::find::find_types(&i, &find_req("Zzz"), status(), &c).unwrap().items.is_empty());
+    assert_eq!(names(&crate::find::find_types(&i, &find_req("Book "), status(), &c).unwrap()), vec!["a.Book", "b.BOOK", "a.NewBook"], "names that end in Book");
+    let err = crate::find::find_types(&i, &find_req("Book"), status(), &AtomicBool::new(true));
+    assert_eq!(err.unwrap_err().code(), "cancelled");
+}
+
+#[test]
+fn lower_case_humps_rank_after_exact_case_and_contiguous() {
+    let mk = |names: &[&str]| {
+        index(names.iter().enumerate().map(|(k, n)| file(&format!("/p/f{k}.kt"), Lang::Kotlin, "p", vec![], vec![ty(n, TypeKind::Class)])).collect())
+    };
+    let i = mk(&["NewArrivalBookService", "NewAbsolute", "Nabstract", "NaBsX"]);
+    let c = AtomicBool::new(false);
+    let r = crate::find::find_types(&i, &find_req("nabs"), status(), &c).unwrap();
+    // Contiguous letters first, then the name with fewer jumps, then the humps.
+    assert_eq!(names(&r), vec!["p.NaBsX", "p.Nabstract", "p.NewAbsolute", "p.NewArrivalBookService"]);
+    let r = crate::find::find_types(&i, &find_req("NABS"), status(), &c).unwrap();
+    assert_eq!(names(&r), vec!["p.NewArrivalBookService"], "upper-case letters still need humps");
+    assert!(crate::find::find_types(&i, &find_req("ook"), status(), &c).unwrap().items.is_empty());
+}
+
+#[test]
+fn find_types_qualifier() {
+    let i = find_index();
+    let c = AtomicBool::new(false);
+    let r = crate::find::find_types(&i, &find_req("cart.Service"), status(), &c).unwrap();
+    assert_eq!(names(&r), vec!["jp.shop.cart.CartService"]);
+    assert_eq!(r.items[0].container, "jp.shop.cart");
+    assert_eq!(r.items[0].container_matches, vec![8, 9, 10, 11]);
+    assert_eq!(names(&crate::find::find_types(&i, &find_req("shop.cart.CartSer"), status(), &c).unwrap()), vec!["jp.shop.cart.CartService"]);
+    assert_eq!(names(&crate::find::find_types(&i, &find_req("order.Service"), status(), &c).unwrap()), vec!["jp.shop.order.OrderService"]);
+    assert_eq!(names(&crate::find::find_types(&i, &find_req("Outer.Inner"), status(), &c).unwrap()), vec!["x.Outer.Inner"]);
+    assert!(crate::find::find_types(&i, &find_req("nothing.Service"), status(), &c).unwrap().items.is_empty());
+    assert_eq!(names(&crate::find::find_types(&i, &find_req("jp.Service"), status(), &c).unwrap()).len(), 2, "both packages are under jp");
+    // Only a qualifier with a trailing dot: everything inside.
+    assert_eq!(names(&crate::find::find_types(&i, &find_req("cart."), status(), &c).unwrap()), vec!["jp.shop.cart.CartService"]);
+}
+
+#[test]
+fn find_symbols_kinds_owner_and_ranking() {
+    let mut svc = ty("CartService", TypeKind::Class);
+    let mut add = method("addItem", Some(tr("Unit")), vec![("id", tr("Long"))]);
+    add.line = 3;
+    let mut hidden = method("addItemInternal", None, vec![]);
+    hidden.visibility = Visibility::Private;
+    let mut ctor = member("CartService", MemberKind::Constructor, None);
+    ctor.params = vec![Param { name: "repo".into(), ty: Some(tr("Repo")) }];
+    svc.methods = vec![hidden, add, ctor];
+    svc.fields = vec![field("items", generic("List", vec![tr("Item")]))];
+    let mut color = ty("Color", TypeKind::Enum);
+    color.fields = vec![member("RED", MemberKind::EnumCase, None)];
+    let mut ext = ty("CartService", TypeKind::Extension);
+    ext.methods = vec![method("addExtra", None, vec![])];
+    let mut f = FileModel { package: "jp.cart".into(), imports: vec![], types: vec![svc], top_level: vec![] };
+    f.top_level = vec![method("addAll", None, vec![]), member("addCount", MemberKind::Property, Some(tr("Int")))];
+    let kt = Arc::new(FileEntry {
+        path: PathBuf::from("/p/a/Cart.kt"),
+        lang: Lang::Kotlin,
+        mtime_ms: 0,
+        size: 0,
+        words: Box::new([]),
+        model: crate::cmodel::CModel::from_model(&f),
+    });
+    let sw = file("/p/S/Color.swift", Lang::Swift, "", vec![], vec![color, ty("CartService", TypeKind::Struct), ext]);
+    let i = index(vec![kt, sw]);
+    let c = AtomicBool::new(false);
+    let run = |q: &str| crate::find::find_symbols(&i, &find_req(q), status(), &c).unwrap();
+    let r = run("addItem");
+    let got: Vec<_> = r.items.iter().map(|h| (h.name.as_str(), h.kind)).collect();
+    assert_eq!(got, vec![("addItem", crate::SymbolKindOut::Method), ("addItemInternal", crate::SymbolKindOut::Method)]);
+    assert_eq!(r.items[0].owner, "jp.cart.CartService");
+    assert_eq!(r.items[0].owner_name, "CartService");
+    assert_eq!(r.items[0].params, "id: Long");
+    assert_eq!(r.items[0].ty, "Unit");
+    assert_eq!(r.items[0].line, 3);
+    // Public first inside a group, then by length: addItem is a prefix of both.
+    let r = run("add");
+    let got: Vec<_> = r.items.iter().map(|h| h.name.as_str()).collect();
+    assert_eq!(got, vec!["addAll", "addItem", "addCount", "addExtra", "addItemInternal"]);
+    assert_eq!(r.items[0].kind, crate::SymbolKindOut::Function);
+    assert_eq!(r.items[0].owner, "");
+    assert_eq!(r.items[0].owner_name, "Cart.kt");
+    assert_eq!(r.items.iter().find(|h| h.name == "addCount").unwrap().kind, crate::SymbolKindOut::Variable);
+    // The extension method has the extended type as owner.
+    let ex = r.items.iter().find(|h| h.name == "addExtra").unwrap();
+    assert_eq!((ex.owner.as_str(), ex.lang), ("CartService", CodeLang::Swift));
+    // Constructors have the name of the type. Fields and enum cases are found.
+    let r = run("CartService");
+    assert!(r.items.iter().any(|h| h.kind == crate::SymbolKindOut::Constructor && h.params == "repo: Repo"));
+    assert_eq!(run("items").items[0].kind, crate::SymbolKindOut::Property);
+    assert_eq!(run("RED").items[0].kind, crate::SymbolKindOut::EnumCase);
+    // `Type.method`, `Type#method` and humps of the type.
+    let q = |s: &str| run(s).items.iter().map(|h| (h.owner.clone(), h.name.clone())).collect::<Vec<_>>();
+    assert_eq!(q("CartService.addItem"), vec![("jp.cart.CartService".to_string(), "addItem".to_string()), ("jp.cart.CartService".into(), "addItemInternal".into())]);
+    assert_eq!(q("CS#addI").len(), 2);
+    assert_eq!(q("cart.CartService.addItem").len(), 2, "package parts before the type");
+    assert_eq!(q("Color.RED"), vec![("Color".to_string(), "RED".to_string())]);
+    assert!(q("Cart.RED").is_empty());
+    assert_eq!(q("Cart.addExtra"), vec![("CartService".to_string(), "addExtra".to_string())]);
+    assert_eq!(q("Cart.addAll").len(), 1, "the file name is the owner of top-level symbols");
+    assert_eq!(q("Nope.addAll").len(), 0);
+    // The same filters as for types.
+    let mut req = find_req("add");
+    req.langs = vec![CodeLang::Swift];
+    assert_eq!(crate::find::find_symbols(&i, &req, status(), &c).unwrap().items.len(), 1);
+}
+
+#[test]
+fn find_json_shapes() {
+    let i = find_index();
+    let c = AtomicBool::new(false);
+    let r = crate::find::find_types(&i, &find_req("cart.Service"), status(), &c).unwrap();
+    let j = serde_json::to_value(&r).unwrap();
+    assert_eq!(keys(&j), ["elapsedMs", "index", "items", "truncated"]);
+    assert_eq!(keys(&j["items"][0]), ["column", "container", "containerMatches", "kind", "lang", "line", "name", "nameMatches", "path", "qualified", "test"]);
+    assert_eq!(j["items"][0]["kind"], "class");
+    assert_eq!(j["items"][0]["lang"], "kotlin");
+    let mut m = member("f", MemberKind::Method, Some(tr("Int")));
+    m.params = vec![];
+    let mut t = ty("T", TypeKind::Class);
+    t.methods = vec![m];
+    let i = index(vec![file("/p/T.kt", Lang::Kotlin, "p", vec![], vec![t])]);
+    let j = serde_json::to_value(crate::find::find_symbols(&i, &find_req("f"), status(), &c).unwrap()).unwrap();
+    assert_eq!(keys(&j["items"][0]), ["column", "kind", "lang", "line", "name", "nameMatches", "owner", "ownerName", "params", "path", "test", "type", "visibility"]);
+    assert_eq!(j["items"][0]["kind"], "method");
+    assert_eq!(j["items"][0]["visibility"], "public");
+    let req: crate::FindRequest = serde_json::from_value(serde_json::json!({ "root": "/p", "query": "x" })).unwrap();
+    assert!(req.limit.is_none() && !req.exclude_tests && req.langs.is_empty());
+    let req: crate::FindRequest =
+        serde_json::from_value(serde_json::json!({ "root": "/p", "query": "x", "limit": 5, "excludeTests": true, "langs": ["swift", "java"] })).unwrap();
+    assert_eq!((req.limit, req.exclude_tests, req.langs.len()), (Some(5), true, 2));
+}
+
 // --- JSON shapes ----------------------------------------------------------------
 
 fn keys(v: &serde_json::Value) -> Vec<String> {

@@ -56,12 +56,13 @@ export function registerShellCommands(ctx: AppContext, d: Deps): Disposable {
     { id: 'workbench.showExplorer', title: 'Show Explorer', category: 'View', keybinding: 'Mod-Shift-e', run: () => showView('explorer') },
     {
       id: 'workbench.showSearch',
-      title: 'Show Search',
+      title: 'Show Search View',
       category: 'View',
-      keybinding: 'Mod-Shift-f',
+      // Mod-Shift-f opens the Find in Files popup (search.findInFiles). This
+      // command shows the sidebar Search view (the "Find Window").
       run: () => {
+        if (ctx.commands.get('search.showFindWindow')) return ctx.commands.execute('search.showFindWindow');
         showView('search');
-        if (ctx.commands.get('search.findInFiles')) return ctx.commands.execute('search.findInFiles');
       },
     },
     { id: 'workbench.showGit', title: 'Show Source Control', category: 'View', keybinding: 'Ctrl-Shift-g', run: () => showView('git') },

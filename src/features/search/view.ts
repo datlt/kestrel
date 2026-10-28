@@ -9,9 +9,12 @@ import {
   searchText,
   type FileMatches,
   type LineMatch,
+  type SearchContext,
   type TextSearchEvent,
 } from '../../ipc/search';
 import { highlightSegments, splitGlobs } from './query';
+import { buildSearchRequest, passesPostFilter, type ScopeSpec } from './scope';
+import type { FindWindowPayload } from './find-window';
 import { fileIcon } from '../../ui/file-icons';
 import './search.css';
 
@@ -48,6 +51,10 @@ export class SearchView implements ViewInstance {
   private readonly spacer: HTMLElement;
   private readonly toggles = new Map<keyof Options, HTMLButtonElement>();
   private options: Options;
+  /** Scope that came from the Find in Files popup. null: the whole project. */
+  private scope: ScopeSpec | null = null;
+  private context: SearchContext = 'anywhere';
+  private readonly chip: HTMLElement;
 
   private groups: FileGroup[] = [];
   private rows: Row[] = [];
@@ -57,6 +64,8 @@ export class SearchView implements ViewInstance {
   /** Number of the newest search. Events of older searches are ignored. */
   private seq = 0;
   private searchId: number | null = null;
+  /** Scope of the running search, for the post filter. */
+  private postFilter: ScopeSpec | null = null;
   private running = false;
   private totalMatches = 0;
 
@@ -123,13 +132,15 @@ export class SearchView implements ViewInstance {
     this.details.hidden = !(this.include.value || this.exclude.value);
     detailsButton.setAttribute('aria-pressed', String(!this.details.hidden));
 
+    this.chip = h('div', { class: 'search-chip-row' });
+    this.chip.hidden = true;
     this.summary = h('div', { class: 'search-summary' });
     this.spacer = h('div', { class: 'search-spacer' });
     this.scroller = h('div', { class: 'search-results', tabindex: '0', role: 'tree', 'aria-label': 'Search results' }, this.spacer);
 
     host.classList.add('search-view');
     host.append(
-      h('div', { class: 'search-form' }, h('div', { class: 'search-query-row' }, queryField, detailsButton), this.details),
+      h('div', { class: 'search-form' }, h('div', { class: 'search-query-row' }, queryField, detailsButton), this.details, this.chip),
       this.summary,
       this.scroller,
     );
@@ -198,6 +209,64 @@ export class SearchView implements ViewInstance {
     this.focus();
   }
 
+  /** Fills the view with the query, options, scope and results of the popup. Does not search. */
+  load(p: FindWindowPayload): void {
+    this.cancel();
+    this.input.value = p.query;
+    this.options = { ...p.options };
+    this.ctx.workspace.globalState.set(OPTIONS_KEY, this.options);
+    this.syncToggles();
+    this.include.value = p.include;
+    this.exclude.value = p.exclude;
+    this.ctx.workspace.state.set(INCLUDE_KEY, p.include);
+    this.ctx.workspace.state.set(EXCLUDE_KEY, p.exclude);
+    this.details.hidden = !(p.include || p.exclude);
+    const custom = p.scope.label !== 'In Project' || p.context !== 'anywhere';
+    this.scope = custom ? p.scope : null;
+    this.context = p.context;
+    this.showChip();
+    this.reset();
+    for (const f of p.files) {
+      this.groups.push({
+        path: f.path,
+        rel: f.rel,
+        name: f.name,
+        dir: f.dir,
+        matches: f.matches,
+        collapsed: false,
+      });
+      this.totalMatches += f.matches.length;
+    }
+    this.rebuildRows();
+    const files = this.groups.length;
+    const plus = p.truncated ? ' (limit reached, refine the search)' : '';
+    this.setSummary(
+      this.totalMatches
+        ? `${this.totalMatches.toLocaleString()} result${this.totalMatches === 1 ? '' : 's'} in ${files.toLocaleString()} file${files === 1 ? '' : 's'}${plus}`
+        : p.query
+          ? 'No results found.'
+          : '',
+    );
+    this.focus();
+  }
+
+  private showChip(): void {
+    this.chip.replaceChildren();
+    const parts: string[] = [];
+    if (this.scope && this.scope.label !== 'In Project') parts.push(this.scope.label);
+    if (this.context !== 'anywhere') parts.push(this.context);
+    this.chip.hidden = !parts.length;
+    if (!parts.length) return;
+    const clear = h('button', { class: 'search-chip-clear', type: 'button', title: 'Search the whole project again', 'aria-label': 'Clear the scope' }, '\u00d7');
+    clear.addEventListener('click', () => {
+      this.scope = null;
+      this.context = 'anywhere';
+      this.showChip();
+      this.run();
+    });
+    this.chip.append(h('span', { class: 'search-chip' }, `Scope: ${parts.join(', ')}`), clear);
+  }
+
   focus(): void {
     this.input.focus();
     this.input.select();
@@ -242,17 +311,27 @@ export class SearchView implements ViewInstance {
     const seq = this.seq;
     this.running = true;
     this.totalMatches = 0;
+    const scope: ScopeSpec = this.scope ?? { label: 'In Project', root, include: [], exclude: [], postFilter: null };
+    if (scope.empty) {
+      this.finish();
+      this.setSummary(scope.empty);
+      return;
+    }
+    const req = buildSearchRequest(scope, { include: splitGlobs(this.include.value), exclude: splitGlobs(this.exclude.value) });
+    this.postFilter = scope;
     this.setSummary('Searching…');
     searchText(
-      root,
+      req.root,
       {
         query,
         regex: this.options.regex,
         matchCase: this.options.matchCase,
         wholeWord: this.options.wholeWord,
-        include: splitGlobs(this.include.value),
-        exclude: splitGlobs(this.exclude.value),
+        include: req.include,
+        exclude: req.exclude,
         maxResults: this.ctx.settings.get('search.maxResults') ?? 20000,
+        ...(req.paths ? { paths: req.paths } : {}),
+        context: this.context,
       },
       (e) => {
         if (seq === this.seq) this.onEvent(e);
@@ -314,6 +393,8 @@ export class SearchView implements ViewInstance {
   }
 
   private addFile(f: FileMatches): void {
+    const root = this.ctx.workspace.root ?? '';
+    if (this.postFilter && !passesPostFilter(this.postFilter.postFilter, f.path, root)) return;
     const rel = this.ctx.workspace.relative(f.path).replace(/\\/g, '/');
     const group: FileGroup = {
       path: f.path,

@@ -2,7 +2,7 @@
 //! is done in `kestrel-code`. Command names start with `code_`.
 
 use super::{Handler, SetupResult};
-use kestrel_code::{CallersRequest, CallersResult, CodeIndexStatus, CodeManager, DiagramRequest, DiagramResult, UsagesRequest, UsagesResult};
+use kestrel_code::{FindRequest, FindResult, SymbolHit, TypeHit, CallersRequest, CallersResult, CodeIndexStatus, CodeManager, DiagramRequest, DiagramResult, UsagesRequest, UsagesResult};
 use kestrel_common::{Error, Result};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -105,6 +105,34 @@ async fn code_callers(window: Window, state: State<'_, CodeState>, id: u64, requ
     .map_err(join_error)?
 }
 
+#[tauri::command]
+async fn code_find_types(window: Window, state: State<'_, CodeState>, id: u64, request: FindRequest) -> Result<FindResult<TypeHit>> {
+    let label = window.label().to_owned();
+    let flag = register(&state, &label, id);
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<CodeState>();
+        let _reg = Registered { state: &st, key: (label.clone(), id) };
+        st.manager.find_types(&label, &request, &flag)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[tauri::command]
+async fn code_find_symbols(window: Window, state: State<'_, CodeState>, id: u64, request: FindRequest) -> Result<FindResult<SymbolHit>> {
+    let label = window.label().to_owned();
+    let flag = register(&state, &label, id);
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<CodeState>();
+        let _reg = Registered { state: &st, key: (label.clone(), id) };
+        st.manager.find_symbols(&label, &request, &flag)
+    })
+    .await
+    .map_err(join_error)?
+}
+
 pub fn handler() -> Handler {
     Box::new(tauri::generate_handler![
         code_index_status,
@@ -113,7 +141,9 @@ pub fn handler() -> Handler {
         code_cancel,
         code_diagram,
         code_usages,
-        code_callers
+        code_callers,
+        code_find_types,
+        code_find_symbols
     ])
 }
 

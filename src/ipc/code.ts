@@ -54,13 +54,13 @@ export function codeIndexDrop(root: string): Promise<void> {
   return invoke<void>('code_index_drop', { root });
 }
 
-/** Stops a running `codeDiagram` or `codeUsages` call. It then rejects with code `cancelled`. */
+/** Stops a running `codeDiagram`, `codeUsages`, `codeCallers`, `codeFindTypes` or `codeFindSymbols` call. It then rejects with code `cancelled`. */
 export function codeCancel(id: number): Promise<void> {
   return invoke<void>('code_cancel', { id });
 }
 
 let nextId = 1;
-/** A new id for `codeDiagram` and `codeUsages` (to cancel them). */
+/** A new id for the `code*` requests that take one (to cancel them). */
 export function newCodeRequestId(): number {
   return nextId++;
 }
@@ -363,4 +363,88 @@ export interface CallersResult {
  */
 export function codeCallers(id: number, request: CallersRequest): Promise<CallersResult> {
   return invoke<CallersResult>('code_callers', { id, request });
+}
+
+// --- Go to class and go to symbol --------------------------------------------
+
+/**
+ * The query, as the user types it in Search Everywhere. Rust understands:
+ * - camel humps and parts: `NABS`, `NewArrBS`, `newArrival service` all find
+ *   `NewArrivalBookService`; case only matters for the upper-case hump letters;
+ * - `*` as "anything": `*Repository`, `Book*Mapper`;
+ * - a dotted qualifier: `cart.Service` (the package or the outer types contain
+ *   `cart`), `Outer.Inner`, and for symbols `Type.method` or `Type#method`;
+ * - a trailing space: the name must end there (`Book ` finds `Book`, not `BookMapper`).
+ * The frontend removes a trailing `:line` or `:line:column` before it sends the query.
+ */
+export interface FindRequest {
+  root: string;
+  query: string;
+  /** Default 100. */
+  limit?: number;
+  /** Leave out test code (the same rule as `CallerNode.test`). */
+  excludeTests?: boolean;
+  /** Only these languages. Empty or not set: all. */
+  langs?: CodeLang[];
+}
+
+export interface TypeHit {
+  name: string;
+  /** Qualified name, the same as `DiagramNode.id` without `#n`. */
+  qualified: string;
+  /** Package and outer types, or the Swift folder. */
+  container: string;
+  kind: TypeKind;
+  lang: CodeLang;
+  /** Absolute path. */
+  path: string;
+  /** Position of the name (column in UTF-16 units). */
+  line: number;
+  column: number;
+  /** Indexes (UTF-16) of the matched characters in `name`, for bold text. */
+  nameMatches: number[];
+  /** Indexes in `container` matched by a dotted qualifier. */
+  containerMatches: number[];
+  test: boolean;
+}
+
+export interface SymbolHit {
+  name: string;
+  kind: 'method' | 'constructor' | 'field' | 'property' | 'enumCase' | 'function' | 'variable';
+  /** Qualified name of the declaring type. Empty for Kotlin top-level and Swift global symbols. */
+  owner: string;
+  /** Simple name of the declaring type (or the file name for top-level symbols). */
+  ownerName: string;
+  /** Parameters as text, like `DiagramMember.params`. Empty for fields. */
+  params: string;
+  /** Field type or return type as written. Empty when unknown. */
+  type: string;
+  visibility: Visibility;
+  lang: CodeLang;
+  /** Absolute path. */
+  path: string;
+  line: number;
+  column: number;
+  nameMatches: number[];
+  test: boolean;
+}
+
+export interface FindResult<T> {
+  /** Best first. */
+  items: T[];
+  /** More items matched than `limit`. */
+  truncated: boolean;
+  /** The index is `ready` when the call returns (the call waits for a build). */
+  index: CodeIndexStatus;
+  elapsedMs: number;
+}
+
+/** Types whose name matches the query (Go to Class). Builds the index first when needed. */
+export function codeFindTypes(id: number, request: FindRequest): Promise<FindResult<TypeHit>> {
+  return invoke<FindResult<TypeHit>>('code_find_types', { id, request });
+}
+
+/** Methods, fields, properties and top-level functions whose name matches (Go to Symbol). */
+export function codeFindSymbols(id: number, request: FindRequest): Promise<FindResult<SymbolHit>> {
+  return invoke<FindResult<SymbolHit>>('code_find_symbols', { id, request });
 }

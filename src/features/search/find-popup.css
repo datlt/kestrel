@@ -1,0 +1,198 @@
+/* Find in Files popup. Only theme variables for colors. */
+
+.find-popup {
+  position: absolute;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  font-size: var(--font-size-ui);
+  overflow: hidden;
+}
+
+.find-popup [hidden] { display: none !important; }
+.find-grow { flex: 1; min-width: 0; }
+
+.find-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+}
+.find-head:active { cursor: grabbing; }
+.find-title { font-weight: 600; }
+.find-count { color: var(--fg-muted); }
+
+.find-btn, .find-toggle, .find-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  flex: none;
+}
+.find-btn svg, .find-toggle svg, .find-x svg { width: 16px; height: 16px; }
+.find-btn:hover, .find-toggle:hover, .find-x:hover { background: var(--hover); color: var(--fg); }
+.find-btn[aria-pressed='true'], .find-toggle[aria-pressed='true'] { background: var(--active); color: var(--accent); }
+.find-toggle-text { width: auto; padding: 0 6px; font-size: 11px; font-weight: 600; }
+
+.find-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
+.find-row-form { display: flex; align-items: center; gap: 6px; }
+.find-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.find-field:focus-within { border-color: var(--focus-ring); }
+.find-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+}
+.find-error, .find-error-text { color: var(--danger); }
+.find-check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+.find-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.find-tab {
+  padding: 4px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.find-tab:hover { color: var(--fg); }
+.find-tab[aria-selected='true'] { color: var(--fg); border-bottom-color: var(--accent); }
+.find-scope-bar { display: flex; align-items: center; gap: 6px; }
+.find-scope-bar svg { width: 16px; height: 16px; color: var(--fg-muted); flex: none; }
+.find-scope-bar .find-path { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); }
+.find-select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.find-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.find-action svg { width: 14px; height: 14px; }
+.find-action:hover:not(:disabled) { background: var(--hover); }
+.find-action:disabled { opacity: 0.45; cursor: default; }
+.find-action-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.find-action-primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
+
+/* List and preview */
+.find-body { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.find-list { position: relative; flex: 0 0 45%; min-height: 0; display: flex; }
+.find-results { position: relative; flex: 1; overflow: auto; outline: 0; }
+.find-spacer { position: relative; min-width: 100%; }
+.find-empty { position: absolute; inset: 0; padding: 16px; color: var(--fg-muted); pointer-events: none; }
+.find-split { flex: none; height: 5px; margin: -2px 0; cursor: row-resize; position: relative; z-index: 1; }
+.find-split:hover { background: var(--active); }
+
+.find-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  white-space: nowrap;
+  cursor: default;
+}
+.find-row:hover { background: var(--hover); }
+.find-row.find-selected { background: var(--active); }
+.find-results:focus-within .find-row.find-selected,
+.find-popup:focus-within .find-row.find-selected { background: var(--selection); }
+.find-indent { padding-left: 34px; }
+.find-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.find-hit { font-weight: 700; color: var(--accent); }
+.find-old { color: var(--danger); text-decoration: line-through; background: var(--diff-removed-bg); }
+.find-new { color: var(--ok); background: var(--diff-added-bg); }
+.find-where { display: inline-flex; gap: 8px; flex: none; color: var(--fg-muted); }
+.find-where-file { color: var(--fg); }
+.find-lineno { min-width: 28px; text-align: right; }
+.find-file-row { font-weight: 600; }
+.find-file-name { overflow: hidden; text-overflow: ellipsis; }
+.find-file-dir { color: var(--fg-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.find-chevron { display: inline-flex; width: 16px; flex: none; }
+.find-chevron svg { width: 14px; height: 14px; }
+.find-badge { color: var(--fg-muted); font-weight: 400; }
+.find-row svg { flex: none; }
+.find-excluded { opacity: 0.5; }
+.find-excluded .find-old { text-decoration: none; background: transparent; color: inherit; }
+.find-excluded .find-new { display: none; }
+.find-x { width: 20px; height: 20px; visibility: hidden; }
+.find-row:hover .find-x, .find-selected .find-x, .find-excluded .find-x { visibility: visible; }
+
+.find-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.find-pv-path { flex: none; padding: 3px 12px; color: var(--fg-muted); background: var(--bg-alt); border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-pv-body { position: relative; flex: 1; min-height: 0; }
+.find-pv-host { position: absolute; inset: 0; }
+.find-pv-host .cm-editor { height: 100%; background: var(--bg); color: var(--fg); font-family: var(--font-mono); font-size: var(--editor-font-size); }
+.find-pv-host .cm-scroller { font-family: inherit; line-height: var(--editor-line-height); }
+.find-pv-host .cm-gutters { background: var(--bg-alt); color: var(--fg-faint); border: 0; }
+.find-pv-host .cm-editor.cm-focused { outline: 0; }
+.find-pv-hit { background: var(--diff-added-bg); border-radius: 2px; box-shadow: 0 0 0 1px var(--diff-added-strong); }
+.find-pv-current { background: var(--diff-added-strong); }
+.find-pv-message { position: absolute; inset: 0; padding: 16px; color: var(--fg-muted); background: var(--bg); }
+
+.find-foot { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--border); }
+.find-hint { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Resize grips on the edges and corners */
+.find-grip { position: absolute; z-index: 2; touch-action: none; }
+.find-grip-n, .find-grip-s { left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.find-grip-e, .find-grip-w { top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.find-grip-n { top: 0; } .find-grip-s { bottom: 0; }
+.find-grip-e { right: 0; } .find-grip-w { left: 0; }
+.find-grip-ne, .find-grip-nw, .find-grip-se, .find-grip-sw { width: 12px; height: 12px; }
+.find-grip-ne { top: 0; right: 0; cursor: nesw-resize; }
+.find-grip-nw { top: 0; left: 0; cursor: nwse-resize; }
+.find-grip-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.find-grip-sw { bottom: 0; left: 0; cursor: nesw-resize; }

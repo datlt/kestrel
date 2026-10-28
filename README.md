@@ -92,6 +92,13 @@ the whole picture, and quick when you go down to the exact line.
   new instances, type uses and calls. It works without a language server.
 - **Call Hierarchy** (Mod-Shift-h): the callers of a method, then their
   callers, as deep as you open the tree.
+- **Find in Files and Replace in Files** like IntelliJ (Mod-Shift-f,
+  Mod-Shift-r): a popup with a preview, scopes (project, module, folder, open
+  or changed files, production or test files), a file mask, and filters for
+  comments and string literals. See [Search](#search).
+- **Search Everywhere** (Shift twice), **Go to Class** (Mod-Shift-o) and **Go
+  to Symbol** (Mod-Alt-o): camel hump search like `NABS` for
+  `NewArrivalBookService`.
 - **Language servers (LSP)** for Kotlin, Java, Swift, JavaScript and TypeScript:
   completion, hover, go to definition, references, rename, format, problems.
   See [docs/LSP.md](docs/LSP.md).
@@ -314,6 +321,56 @@ caller, and so on up the tree. Each level takes some milliseconds.
 - A caller that is already on the path to the root is marked "recursive".
 - **Expand All** opens three levels (at most 500 callers).
 
+## Search
+
+### Find in Files (Mod-Shift-f)
+
+The popup searches as you type and shows a preview of the selected match.
+
+- **Match Case**, **Words** and **Regex**: the buttons in the field, or
+  Alt-C, Alt-O, Alt-X.
+- **File mask**: for example `*.kt, *.java` or `!*Test.kt` to leave files out.
+- **Filter** (funnel button): Anywhere, In Comments, In String Literals,
+  Except Comments, Except String Literals, Except Comments and String
+  Literals. Kestrel reads the comments and strings of Kotlin, Java and Swift
+  files.
+- **Scope**: In Project, Module (Gradle, Maven, npm, Swift, Cargo or Go
+  modules), Directory (with or without sub folders), or Scope: Open Files,
+  Changed Files, Current File, Production Files, Test Files.
+- Enter opens the match, Mod-Enter keeps the popup open, Alt-Down shows the
+  history. The pin button keeps the popup open when you click elsewhere.
+  **Open in Find Window** moves the results to the Search view on the left.
+
+### Replace in Files (Mod-Shift-r)
+
+The same popup with a Replace field. Each row shows the old text struck
+through and the new text. Press Delete (or the X button) to leave a match or
+a file out. **Replace** changes the selected match, **Replace All** asks
+first. In regex mode `$1`, `$<name>` and `\n` work. **Preserve Case** keeps
+`FOO`, `Foo` and `foo`. Open files change in their editor, so Mod-z undoes the
+change; Kestrel does not touch a file that changed on disk after the search.
+
+### Search Everywhere (Shift twice)
+
+The tabs are All, Classes, Files, Symbols, Actions and Text. Tab switches
+between them.
+
+| Keys | Opens |
+|------|-------|
+| Shift, Shift | All |
+| Mod-Shift-o | Classes (Go to Class) |
+| Mod-Alt-o or Mod-t | Symbols (methods, fields, functions) |
+| Mod-Shift-a | Actions (commands) |
+
+- Type the capital letters of a name (`NABS`), parts of it (`newArr serv`), or
+  a package before it (`cart.Service`). `*` matches anything. A space at the
+  end means the name ends there.
+- `Type#method` or `Type.method` finds a method of a type.
+- `Name:42` opens at line 42.
+- The filter button limits Classes and Symbols to some kinds or languages, or
+  hides test code.
+- With an empty query you see the classes and files that you opened last.
+
 ## GitHub pull requests
 
 Kestrel uses the GitHub CLI. It never sees your token: `gh` keeps it in the
@@ -485,7 +542,8 @@ Main settings:
 |--------|------|
 | Command palette | Mod-Shift-p, F1 |
 | Quick open (find a file) | Mod-p |
-| Find in files | Mod-Shift-f |
+| Find in files, replace in files | Mod-Shift-f, Mod-Shift-r |
+| Search Everywhere, Go to Class, Go to Symbol, actions | Shift Shift, Mod-Shift-o, Mod-Alt-o (or Mod-t), Mod-Shift-a |
 | Find, replace in the file | Mod-f; Mod-Alt-f (macOS) or Mod-h |
 | Go to line | Ctrl-g |
 | New draft | Mod-n |
@@ -516,7 +574,6 @@ Main settings:
 | Switch branch | Mod-Shift-b (or click the branch in the status bar) |
 | Rename symbol | F2 |
 | Format document | Shift-Alt-f |
-| Workspace symbols | Mod-t |
 | Database view | Ctrl-Shift-d |
 | Terminal: show or hide, new terminal | Ctrl-`, Ctrl-Shift-` |
 | Terminal: split right, split down (in a terminal) | Mod-\\, Mod-Shift-\\ |

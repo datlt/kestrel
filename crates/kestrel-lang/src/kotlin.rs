@@ -1731,3 +1731,8 @@ fn new_type(name: &str, kind: TypeKind, owner: Option<usize>, mods: &Mods, line:
         end_line: line,
     }
 }
+
+/// Comments and string literals (see `crate::regions`).
+pub(crate) fn regions(text: &str) -> Vec<crate::model::Region> {
+    crate::jvm_lex::regions(text, true)
+}

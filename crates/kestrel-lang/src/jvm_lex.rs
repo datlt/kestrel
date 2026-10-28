@@ -243,6 +243,9 @@ pub(crate) fn lex(text: &str, kotlin: bool) -> Vec<Tok> {
                 while j < lim && b[j] != b'\'' && b[j] != b'\n' {
                     j += 1;
                 }
+                while j < n && (b[j] & 0xC0) == 0x80 {
+                    j += 1;
+                }
                 if j < n && b[j] == b'\'' {
                     j += 1;
                 }
@@ -628,4 +631,194 @@ pub(crate) fn collect_hits(src: &Src, roles: &[u8], name: &str) -> Vec<IdentHit>
         });
     }
     out
+}
+
+// ---------------------------------------------------------------
+// Regions: comments and string literals
+
+use crate::model::{Region, RegionKind};
+
+struct Rg<'a> {
+    b: &'a [u8],
+    out: Vec<Region>,
+    kotlin: bool,
+    depth: u32,
+    tmpl: Vec<(u32, u8)>,
+}
+
+impl Rg<'_> {
+    #[inline]
+    fn push(&mut self, kind: RegionKind, s: usize, e: usize) {
+        let e = e.min(self.b.len());
+        if e > s {
+            self.out.push(Region { start: s, end: e, kind });
+        }
+    }
+
+    /// Same rules as `Lx::string_body`, but it only records the ranges.
+    fn string_body(&mut self, mut i: usize, flags: u8, mut seg: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let triple = flags & F_TRIPLE != 0;
+        let esc = flags & F_ESC != 0;
+        loop {
+            if i >= n {
+                self.push(RegionKind::String, seg, n);
+                return n;
+            }
+            match b[i] {
+                b'\\' if esc => i += 2,
+                b'"' => {
+                    if triple {
+                        if i + 2 < n && b[i + 1] == b'"' && b[i + 2] == b'"' {
+                            i += 3;
+                            if !esc {
+                                while i < n && b[i] == b'"' {
+                                    i += 1;
+                                }
+                            }
+                            self.push(RegionKind::String, seg, i);
+                            return i;
+                        }
+                        i += 1;
+                    } else {
+                        i += 1;
+                        self.push(RegionKind::String, seg, i);
+                        return i;
+                    }
+                }
+                b'\n' if !triple => {
+                    self.push(RegionKind::String, seg, i);
+                    return i;
+                }
+                b'$' if self.kotlin => {
+                    if i + 1 < n && (b[i + 1].is_ascii_alphabetic() || b[i + 1] == b'_') {
+                        self.push(RegionKind::String, seg, i);
+                        let mut j = i + 2;
+                        while j < n && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                            j += 1;
+                        }
+                        seg = j;
+                        i = j;
+                    } else if i + 1 < n && b[i + 1] == b'{' {
+                        self.push(RegionKind::String, seg, i);
+                        self.tmpl.push((self.depth, flags));
+                        self.depth += 1;
+                        return i + 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+    }
+}
+
+/// Comments and string literals of Kotlin or Java text.
+pub(crate) fn regions(text: &str, kotlin: bool) -> Vec<Region> {
+    let b = text.as_bytes();
+    let n = b.len();
+    let mut rg = Rg { b, out: Vec::new(), kotlin, depth: 0, tmpl: Vec::new() };
+    let mut i = 0usize;
+    if kotlin && b.starts_with(b"#!") {
+        while i < n && b[i] != b'\n' {
+            i += 1;
+        }
+    }
+    while i < n {
+        match b[i] {
+            b'/' => {
+                let d = if i + 1 < n { b[i + 1] } else { 0 };
+                if d == b'/' {
+                    let s = i;
+                    i += 2;
+                    while i < n && b[i] != b'\n' {
+                        i += 1;
+                    }
+                    rg.push(RegionKind::Comment, s, i);
+                } else if d == b'*' {
+                    let s = i;
+                    i += 2;
+                    let mut nest = 1u32;
+                    while i < n {
+                        if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' {
+                            i += 2;
+                            nest -= 1;
+                            if nest == 0 {
+                                break;
+                            }
+                        } else if kotlin && b[i] == b'/' && i + 1 < n && b[i + 1] == b'*' {
+                            i += 2;
+                            nest += 1;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    rg.push(RegionKind::Comment, s, i);
+                } else {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                let triple = i + 2 < n && b[i + 1] == b'"' && b[i + 2] == b'"';
+                let start = i;
+                if triple {
+                    let flags = F_TRIPLE | if kotlin { 0 } else { F_ESC };
+                    i = rg.string_body(i + 3, flags, start);
+                } else {
+                    i = rg.string_body(i + 1, F_ESC, start);
+                }
+            }
+            b'\'' => {
+                let start = i;
+                let mut j = i + 1;
+                if j < n && b[j] == b'\\' {
+                    j += 2;
+                } else if j < n {
+                    j += 1;
+                    while j < n && (b[j] & 0xC0) == 0x80 {
+                        j += 1;
+                    }
+                }
+                let lim = (j + 10).min(n);
+                while j < lim && b[j] != b'\'' && b[j] != b'\n' {
+                    j += 1;
+                }
+                while j < n && (b[j] & 0xC0) == 0x80 {
+                    j += 1;
+                }
+                if j < n && b[j] == b'\'' {
+                    j += 1;
+                }
+                let j = j.min(n);
+                rg.push(RegionKind::String, start, j);
+                i = j;
+            }
+            b'`' if kotlin => {
+                i += 1;
+                while i < n && b[i] != b'`' && b[i] != b'\n' {
+                    i += 1;
+                }
+                if i < n && b[i] == b'`' {
+                    i += 1;
+                }
+            }
+            b'{' => {
+                rg.depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                let closes = matches!(rg.tmpl.last(), Some(&(d, _)) if d + 1 == rg.depth);
+                rg.depth = rg.depth.saturating_sub(1);
+                i += 1;
+                if closes {
+                    let flags = rg.tmpl.pop().map(|t| t.1).unwrap_or(F_ESC);
+                    i = rg.string_body(i, flags, i);
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    rg.out
 }

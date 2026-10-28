@@ -13,6 +13,50 @@ import type { Session } from "./session";
 
 const STATUS_ID = "lsp.status";
 
+/** One answer of `workspace/symbol`, with the path, line and column already worked out. */
+export interface LspSymbolHit {
+  name: string;
+  /** LSP `SymbolKind` number (5 = Class, 6 = Method, 12 = Function ...). */
+  kind: number;
+  containerName: string;
+  /** Absolute path of the file. */
+  path: string;
+  /** 1-based. */
+  line: number;
+  /** 1-based, in UTF-16 units. */
+  column: number;
+  /** Id of the server that answered, for example `typescript`. */
+  serverId: string;
+}
+
+interface RawSymbol {
+  name: string;
+  kind: number;
+  containerName?: string;
+  location: { uri: string; range?: { start: { line: number; character: number } } };
+}
+
+const MAX_LSP_SYMBOLS = 300;
+
+function toSymbolHits(raw: RawSymbol[], serverId: string): LspSymbolHit[] {
+  const out: LspSymbolHit[] = [];
+  for (const s of raw) {
+    if (out.length >= MAX_LSP_SYMBOLS) break;
+    const path = s.location?.uri ? uriToPath(s.location.uri) : null;
+    if (!path) continue;
+    out.push({
+      name: s.name,
+      kind: s.kind,
+      containerName: s.containerName ?? "",
+      path,
+      line: (s.location.range?.start.line ?? 0) + 1,
+      column: (s.location.range?.start.character ?? 0) + 1,
+      serverId,
+    });
+  }
+  return out;
+}
+
 function statusText(s: Session): string {
   switch (s.state) {
     case "starting":
@@ -245,7 +289,7 @@ export function initLsp(ctx: AppContext): void {
       id: "lsp.workspaceSymbols",
       title: "Go to Symbol in Workspace",
       category,
-      keybinding: "Mod-t",
+      // No key here: Mod-t opens the Symbols tab of Search Everywhere (goto.symbol).
       run: () => {
         const session = manager.currentSession();
         const rt = manager.loaded;
@@ -263,6 +307,44 @@ export function initLsp(ctx: AppContext): void {
           return;
         }
         rt.actions.workspaceSymbols(session.client, ctx);
+      },
+    },
+    {
+      // Used by Search Everywhere. Asks every ready server for `workspace/symbol`.
+      // `root` limits the servers to those whose folder is inside `root` or contains it.
+      // Returns a list of `LspSymbolHit`, or an empty list when no server is ready.
+      id: "lsp.workspaceSymbolsQuery",
+      title: "Workspace Symbols Query",
+      category,
+      hidden: true,
+      run: async (arg?: { query?: string; root?: string }): Promise<LspSymbolHit[]> => {
+        const query = arg?.query ?? "";
+        if (!query.trim()) return [];
+        const root = arg?.root;
+        const sessions = manager
+          .list()
+          .filter(
+            (s) =>
+              s.state === "ready" &&
+              s.client &&
+              (!root || isInside(s.root, root) || isInside(root, s.root)),
+          );
+        const answers = await Promise.all(
+          sessions.map(async (s): Promise<LspSymbolHit[]> => {
+            try {
+              s.client.sync();
+              const result = await s.client.request<unknown, RawSymbol[] | null>(
+                "workspace/symbol",
+                { query },
+              );
+              return toSymbolHits(result ?? [], s.serverId);
+            } catch (e) {
+              console.warn("[lsp] workspace/symbol failed", s.serverId, e);
+              return [];
+            }
+          }),
+        );
+        return answers.flat();
       },
     },
     {
