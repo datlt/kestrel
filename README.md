@@ -1,9 +1,56 @@
-# Kestrel
+<p align="center">
+  <img src="docs/images/icon.png" width="112" alt="Kestrel icon">
+</p>
 
-Kestrel is a small and fast code editor for big codebases.
-It runs on macOS, Windows and Linux. It uses Tauri 2 (Rust and the web view of
-the system) and CodeMirror 6. It does not ship its own Chromium, so the app is
-8 MB and starts in about a third of a second.
+<h1 align="center">Kestrel</h1>
+
+<p align="center">
+  A small, fast code editor.<br>
+  Read, review and fix code in the age of AI agents.
+</p>
+
+<p align="center">
+  <img src="docs/images/hero.jpg" alt="Kestrel with two workspace tabs, a Kotlin file, compact packages in the Explorer and git blame">
+</p>
+
+Kestrel is a code editor for the daily work of a developer: read, review and
+fix code. It has what that work needs and leaves out the rest. You can change
+it, and **feature requests are welcome** (see [Feature requests](#feature-requests)).
+
+## Why Kestrel
+
+IntelliJ IDEA is a great IDE, but it is heavy. It takes a long time to start,
+indexes the whole project before it is useful, and uses gigabytes of memory.
+You pay that price every time you want to look at code.
+
+With AI agents, more and more code is written by the agent. Your day moves from
+typing code to **reading it**: you review what the agent changed, follow the
+diff and the history, read the plans and docs it wrote in Markdown, check the
+data in the database, and make small fixes. Kestrel is built for this work,
+and its goal is to replace IntelliJ IDEA for it:
+
+- It opens in about half a second and the app process uses about 30 MB.
+- Several repositories stay open side by side as workspace tabs.
+- Diff, file history and blame are one key away.
+- Markdown, HTML and CSV files open as rendered views as well as text.
+- A MySQL console with transactions and DDL is built in.
+- Language servers give you completion and go to definition when you need them.
+
+## Why the name
+
+A kestrel is a small falcon. It weighs about 200 grams. It can hang still in
+the wind above a field, watch the ground for a long time, and then drop on its
+target in a second. The editor tries to work the same way: light, able to hover
+over a big codebase so you see the whole picture, and quick when you go down to
+the exact line.
+
+## Screenshots
+
+| | |
+|---|---|
+| **Markdown, split view** <br> <img src="docs/images/markdown-split.jpg" alt="Markdown file with the editor on the left and the rendered preview on the right"> | **MySQL console** <br> <img src="docs/images/mysql-console.jpg" alt="SQL console with the database tree and a result grid"> |
+| **Diff of local changes** <br> <img src="docs/images/git-diff.jpg" alt="Side-by-side diff with collapsed unchanged lines"> | **File history** <br> <img src="docs/images/git-history.jpg" alt="Commits of a file and the diff of the selected commit"> |
+| **CSV as a table** <br> <img src="docs/images/csv-table.jpg" alt="CSV file shown as a sortable table"> | **Open folders in workspace tabs** <br> <img src="docs/images/open-folder-menu.jpg" alt="The + menu of the workspace tabs with recent folders"> |
 
 ## Features
 
@@ -18,6 +65,10 @@ the system) and CodeMirror 6. It does not ship its own Chromium, so the app is
   TSV as a sortable table, images.
 - **Git.** Changes view, side-by-side and unified diff, compare with any branch,
   file history, blame, and changed lines in the editor gutter.
+- **MySQL.** Saved connections (password in the OS keychain, SSH tunnel),
+  schema tree, SQL console with auto-commit on or off, commit and rollback,
+  result grid, DDL viewer, and run-the-statement for `.sql` files. See
+  [Database](#database-mysql).
 - **Language servers (LSP)** for Kotlin, Java, JavaScript and TypeScript:
   completion, hover, go to definition, references, rename, format, problems.
   See [docs/LSP.md](docs/LSP.md).
@@ -166,6 +217,49 @@ Kestrel finds them in the PATH of your login shell, also when you start it from
 the Dock. Details, settings and troubleshooting are in
 [docs/LSP.md](docs/LSP.md).
 
+## Database (MySQL)
+
+Open the **Database** view with Ctrl-Shift-d (or the database icon on the left).
+
+1. Click **+** and fill in the connection: host, port, user, password, default
+   database, TLS mode.
+   - **Save password in keychain** keeps the password in the macOS Keychain
+     (Windows Credential Manager, Linux Secret Service). Without it, Kestrel
+     asks for the password once per session. Passwords are never written to
+     `settings.json`.
+   - **SSH tunnel**: Kestrel runs your system `ssh`, so `~/.ssh/config`, keys
+     and the ssh agent work. Password login for ssh is not supported.
+   - **Production database** shows a red bar in the console and asks before
+     statements that change data. **Read-only** makes every session read only.
+2. Click **Test Connection**, then **Save**.
+3. Expand the connection to see databases, tables, columns, indexes, views,
+   procedures, functions and triggers. Right-click a table for **Select Top
+   100**, **New SQL Console** and **Show DDL**.
+
+In a SQL console:
+
+| Action | Keys |
+|--------|------|
+| Run the selection or the statement at the cursor | Mod-Enter |
+| Run the whole script | Mod-Shift-Enter |
+| Cancel the running statement | Mod-. |
+| New SQL console | Mod-Alt-n |
+
+- **Auto-commit** is on by default. Turn it off to work in a transaction; the
+  toolbar shows a **TRANSACTION** badge and enables **Commit** and
+  **Rollback**. Closing a console with an open transaction asks Commit,
+  Rollback or Cancel.
+- UPDATE or DELETE without WHERE always asks first.
+- Each result set gets its own tab. Right-click the grid to copy rows as TSV,
+  JSON or INSERT statements, or to export a CSV file. The **Messages** tab
+  lists every statement with its time, rows and errors.
+- In a `.sql` file of your project, choose a connection in the status bar and
+  press Mod-Enter to run the statement at the cursor.
+
+To try it without a real database, `scripts/dev-mysql.sh start` runs a local
+MySQL 8 in Docker on 127.0.0.1:13306 with sample data (the user and the test
+password are in the script). `scripts/dev-mysql.sh stop` removes it.
+
 ## Settings
 
 Open the Settings screen with **Mod-,** (or the gear at the bottom left). Each
@@ -198,6 +292,9 @@ Main settings:
 | `git.gutter` | `true` | Show changed lines in the gutter |
 | `lsp.enabled` | `true` | Turn language servers on or off |
 | `lsp.servers` | Kotlin, Java, TypeScript | Server commands, see [docs/LSP.md](docs/LSP.md) |
+| `db.maxRows` | `1000` | Rows fetched per result in a SQL console |
+| `db.confirmWrites` | `"production"` | Ask before data changes: `"production"`, `"always"` or `"never"` |
+| `db.showSystemSchemas` | `false` | Show `mysql`, `sys`, `information_schema`, `performance_schema` |
 
 ## Keyboard shortcuts
 
@@ -235,6 +332,8 @@ Main settings:
 | Rename symbol | F2 |
 | Format document | Shift-Alt-f |
 | Workspace symbols | Mod-t |
+| Database view | Ctrl-Shift-d |
+| Run SQL statement, run script | Mod-Enter, Mod-Shift-Enter |
 
 All other commands are in the command palette.
 
@@ -249,8 +348,11 @@ cargo test --workspace   # Rust
 - `scripts/fixtures.sh <folder>` makes a test folder with sample files, big
   files and a git repository.
 - `scripts/measure.sh` measures the start time and the memory of a release build.
+- `scripts/dev-mysql.sh` starts a test MySQL server. `KESTREL_TEST_MYSQL=127.0.0.1:13306 cargo test -p kestrel-db`
+  runs the database tests against it.
 - `src/dev/README.md` explains how to run the UI in a normal browser with real
-  files (useful for UI tests with browser tools).
+  files (useful for UI tests with browser tools). For database features also
+  run `cargo run -p kestrel-db --example dev_http`.
 
 Project layout:
 
@@ -260,11 +362,11 @@ src/            Web view code (TypeScript)
   window/       Workspace tabs and the window
   shell/        Layout, editor tabs, status bar, quick pick, palette
   editor/       CodeMirror editors, languages, drafts, auto save
-  features/     files, search, git, lsp, preview, settings
+  features/     files, search, git, lsp, preview, settings, db
   ui/           File type icons
   ipc/          Typed wrappers of the Rust commands
 src-tauri/      The Tauri app (Rust): thin command layer
-crates/         Rust logic without Tauri (common, fs, search, git, lsp, markdown)
+crates/         Rust logic without Tauri (common, fs, search, git, lsp, markdown, db)
 docs/           Design and guides
 scripts/        Test fixtures, measuring, dev bridge
 ```
@@ -277,8 +379,8 @@ Release build on an Apple Silicon Mac (macOS 26), opening a small git repo.
 
 | What | Result |
 |------|--------|
-| App size (frontend inside) | 8 MB |
-| Start to visible window (warm) | about 350 ms; about 245 ms of it is macOS starting the web view |
+| App size (frontend inside) | 10 MB |
+| Start to visible window (warm) | 350 to 600 ms, depending on the load of the machine; about 245 ms of it is macOS starting the web view |
 | Memory of the app process (physical footprint) | about 30 MB |
 | Quick open query, 300k files | 2 to 10 ms |
 
@@ -294,7 +396,21 @@ On macOS they use about 100 MB more.
   access to the app. Turn them off with `preview.htmlScripts` if you open HTML
   files you do not trust.
 - The app is not notarized by Apple (see "Install on macOS").
+- MySQL TLS modes `preferred` and `required` encrypt the connection but do not
+  check the server certificate.
 - There is no terminal, no debugger and no extension system.
+
+## Feature requests
+
+If something is missing, slow or in your way, open an issue at
+<https://github.com/datlt/kestrel/issues>. Please write:
+
+- what you want to do (for example "review a pull request branch"),
+- what you do today instead, and
+- a screenshot or an example file when it helps.
+
+Pull requests are welcome too. Read [docs/DESIGN.md](docs/DESIGN.md) first: it
+explains the parts and the rules that keep Kestrel small and fast.
 
 ## License
 

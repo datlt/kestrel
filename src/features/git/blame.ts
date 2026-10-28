@@ -152,7 +152,7 @@ class Cell extends GutterMarker {
       return el;
     }
     // Newer commits get a stronger tint.
-    el.style.background = `color-mix(in srgb, var(--accent) ${(3 + block.recency * 15).toFixed(1)}%, transparent)`;
+    el.style.background = `color-mix(in srgb, var(--accent) ${(2 + block.recency * 7).toFixed(1)}%, transparent)`;
     if (first) {
       const who = document.createElement('span');
       who.className = 'git-blame-author';
