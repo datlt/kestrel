@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kestrel file icons (dev preview)</title>
+  <style>
+    body { margin: 0; font: 13px var(--font-ui); display: flex; }
+    .pane { flex: 1; padding: 16px; background: var(--bg-alt); color: var(--fg); min-height: 100vh; }
+    h2 { margin: 0 0 12px; font-size: 14px; }
+    h3 { margin: 16px 0 6px; font-size: 12px; color: var(--fg-muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 12px; }
+    .item { display: flex; align-items: center; gap: 8px; height: 24px; }
+    .item code { font: 12px var(--font-mono); color: var(--fg-muted); }
+    .big .file-icon { width: 32px; height: 32px; }
+  </style>
+</head>
+<body>
+  <div id="app" style="display: contents"></div>
+  <script type="module" src="./icons-preview.ts"></script>
+</body>
+</html>

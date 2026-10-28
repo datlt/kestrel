@@ -1,0 +1,14 @@
+[package]
+name = "kestrel-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kestrel-common = { workspace = true }
+serde = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

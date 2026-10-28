@@ -1,0 +1,12 @@
+[package]
+name = "kestrel-markdown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kestrel-common = { workspace = true }
+serde = { workspace = true }
+comrak = { version = "0.59", default-features = false }
+mime_guess = "2"
+percent-encoding = "2"

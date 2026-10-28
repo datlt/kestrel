@@ -1,0 +1,76 @@
+/* File icon colors. Owner: icons agent.
+   Each icon has the classes "file-icon", "file-icon-<id>" and "fi-<color>".
+   The color class sets --fi. The ink (text and glyph) color is dark on the
+   bright dark theme fills and white on the deeper light theme fills. */
+
+:root,
+:root[data-theme='dark'] {
+  --fi-red: #ef6b6b;
+  --fi-orange: #f09a52;
+  --fi-amber: #e8b040;
+  --fi-yellow: #e5c84f;
+  --fi-lime: #a6cf5a;
+  --fi-green: #5cc27f;
+  --fi-teal: #3fbfa8;
+  --fi-cyan: #4cc3dd;
+  --fi-blue: #5aa5f5;
+  --fi-indigo: #8c93f0;
+  --fi-purple: #b680e8;
+  --fi-pink: #ec80b8;
+  --fi-brown: #b88a68;
+  --fi-gray: #9aa0ab;
+  --fi-slate: #6f7b8f;
+  --fi-folder: #8aa4c8;
+  --fi-ink: #14151a;
+}
+
+:root[data-theme='light'] {
+  --fi-red: #c9383c;
+  --fi-orange: #c4620f;
+  --fi-amber: #a8700a;
+  --fi-yellow: #8f7600;
+  --fi-lime: #5c8a14;
+  --fi-green: #1f8a4c;
+  --fi-teal: #12806f;
+  --fi-cyan: #0b7f9a;
+  --fi-blue: #1f6fd0;
+  --fi-indigo: #4f55c9;
+  --fi-purple: #8445c4;
+  --fi-pink: #c02f7f;
+  --fi-brown: #8a5a38;
+  --fi-gray: #6b717c;
+  --fi-slate: #4f5b6e;
+  --fi-folder: #5b7fae;
+  --fi-ink: #ffffff;
+}
+
+.file-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+  overflow: visible;
+}
+.fi-red { --fi: var(--fi-red); }
+.fi-orange { --fi: var(--fi-orange); }
+.fi-amber { --fi: var(--fi-amber); }
+.fi-yellow { --fi: var(--fi-yellow); }
+.fi-lime { --fi: var(--fi-lime); }
+.fi-green { --fi: var(--fi-green); }
+.fi-teal { --fi: var(--fi-teal); }
+.fi-cyan { --fi: var(--fi-cyan); }
+.fi-blue { --fi: var(--fi-blue); }
+.fi-indigo { --fi: var(--fi-indigo); }
+.fi-purple { --fi: var(--fi-purple); }
+.fi-pink { --fi: var(--fi-pink); }
+.fi-brown { --fi: var(--fi-brown); }
+.fi-gray { --fi: var(--fi-gray); }
+.fi-slate { --fi: var(--fi-slate); }
+.fi-folder { --fi: var(--fi-folder); }
+.fi-dim { opacity: 0.55; }
+.file-icon .b { fill: var(--fi); }
+.file-icon .k { fill: var(--fi-ink); }
+.file-icon .s { fill: none; stroke: var(--fi); stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
+.file-icon .g { fill: none; stroke: var(--fi-ink); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.file-icon text { text-anchor: middle; font-family: var(--font-ui); font-weight: 700; letter-spacing: -0.2px; }

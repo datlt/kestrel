@@ -1,0 +1,29 @@
+/* Global reset. Owner: integrator. Component styles live next to their code. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-ui);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#app { height: 100%; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+input, textarea, .cm-content { user-select: text; -webkit-user-select: text; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }

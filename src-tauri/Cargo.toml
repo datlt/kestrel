@@ -1,0 +1,29 @@
+[package]
+name = "kestrel"
+description = "Kestrel: a small and fast code editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "kestrel_lib"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-window-state = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+kestrel-common = { workspace = true }
+kestrel-fs = { workspace = true }
+kestrel-search = { workspace = true }
+kestrel-git = { workspace = true }
+kestrel-lsp = { workspace = true }
+kestrel-markdown = { workspace = true }

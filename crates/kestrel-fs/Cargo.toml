@@ -1,0 +1,21 @@
+[package]
+name = "kestrel-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kestrel-common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+encoding_rs = "0.8"
+chardetng = "1"
+ignore = "0.4"
+notify = "8"
+notify-debouncer-full = "0.6"
+trash = "5"
+
+[dev-dependencies]
+tempfile = "3"

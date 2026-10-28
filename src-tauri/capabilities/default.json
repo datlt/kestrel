@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for all Kestrel windows",
+  "windows": [
+    "*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-title",
+    "core:window:allow-set-background-color",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:webview:allow-set-webview-zoom",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "opener:default",
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    "window-state:default"
+  ]
+}

@@ -1,0 +1,142 @@
+/* LSP panels. Colors come from the theme variables only. */
+
+.lsp-problems,
+.lsp-output {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-alt);
+}
+
+.lsp-problems-summary {
+  flex: none;
+  padding: 3px 10px;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.lsp-rows {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lsp-rows-spacer {
+  position: relative;
+  min-width: 100%;
+}
+
+.lsp-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lsp-row:hover {
+  background: var(--hover);
+}
+
+.lsp-row-file {
+  font-weight: 600;
+}
+
+.lsp-row-problem {
+  padding-left: 26px;
+}
+
+.lsp-twisty {
+  width: 10px;
+  color: var(--fg-muted);
+}
+
+.lsp-file-dir,
+.lsp-source,
+.lsp-pos {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.lsp-file-dir,
+.lsp-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lsp-count {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--hover);
+  color: var(--fg-muted);
+  text-align: center;
+  font-weight: 400;
+}
+
+.lsp-dot-error { color: var(--danger); }
+.lsp-dot-warning { color: var(--warn); }
+.lsp-dot-info { color: var(--info); }
+.lsp-dot-hint { color: var(--fg-faint); }
+
+.lsp-empty {
+  padding: 12px 14px;
+  color: var(--fg-muted);
+}
+
+.lsp-output-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lsp-output-select,
+.lsp-output-button {
+  height: 20px;
+  padding: 0 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.lsp-output-select {
+  max-width: 60%;
+}
+
+.lsp-output-button {
+  cursor: pointer;
+}
+
+.lsp-output-button:hover:not([disabled]) {
+  background: var(--hover);
+}
+
+.lsp-output-button[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.lsp-output-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}

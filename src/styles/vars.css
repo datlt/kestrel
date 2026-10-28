@@ -1,0 +1,86 @@
+/* Theme variables. Owner: integrator (shell may tune values).
+   Every part must use these variables instead of fixed colors, so the
+   light and dark themes work everywhere. Token colors (--tok-*) live in
+   src/editor/tokens.css (owner: editor engine). */
+
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Hiragino Sans", "Yu Gothic UI", "Malgun Gothic", Ubuntu, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Cascadia Code", "Noto Sans Mono", monospace;
+  --font-size-ui: 13px;
+  --editor-font-size: 13px;
+  --editor-line-height: 1.5;
+  --radius: 4px;
+  --row-height: 22px;
+  --tab-height: 34px;
+  --statusbar-height: 22px;
+  --activitybar-width: 44px;
+}
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #1f2023;
+  --bg-alt: #18191b;          /* sidebar, panel, tab bar */
+  --bg-elevated: #2a2b2f;     /* menus, quick pick, dialogs */
+  --bg-input: #141517;
+  --fg: #d6d7da;
+  --fg-muted: #8b8e96;
+  --fg-faint: #5d6068;
+  --border: #303136;
+  --accent: #4c9dff;
+  --accent-fg: #ffffff;
+  --hover: rgba(255, 255, 255, 0.06);
+  --active: rgba(76, 157, 255, 0.18);
+  --selection: rgba(76, 157, 255, 0.28);
+  --focus-ring: #4c9dff;
+  --danger: #f2686a;
+  --warn: #e3b341;
+  --ok: #57c27a;
+  --info: #4c9dff;
+  --git-added: #57c27a;
+  --git-modified: #4c9dff;
+  --git-deleted: #f2686a;
+  --git-untracked: #8fd18f;
+  --git-ignored: #5d6068;
+  --git-conflict: #e3b341;
+  --diff-added-bg: rgba(87, 194, 122, 0.14);
+  --diff-removed-bg: rgba(242, 104, 106, 0.14);
+  --diff-added-strong: rgba(87, 194, 122, 0.32);
+  --diff-removed-strong: rgba(242, 104, 106, 0.32);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --scrollbar: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-alt: #f6f7f9;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --fg: #1f2328;
+  --fg-muted: #626a73;
+  --fg-faint: #a0a6ad;
+  --border: #e1e4e8;
+  --accent: #0b6bde;
+  --accent-fg: #ffffff;
+  --hover: rgba(0, 0, 0, 0.05);
+  --active: rgba(11, 107, 222, 0.12);
+  --selection: rgba(11, 107, 222, 0.2);
+  --focus-ring: #0b6bde;
+  --danger: #cf222e;
+  --warn: #9a6700;
+  --ok: #1a7f37;
+  --info: #0b6bde;
+  --git-added: #1a7f37;
+  --git-modified: #0b6bde;
+  --git-deleted: #cf222e;
+  --git-untracked: #2da44e;
+  --git-ignored: #a0a6ad;
+  --git-conflict: #9a6700;
+  --diff-added-bg: rgba(26, 127, 55, 0.1);
+  --diff-removed-bg: rgba(207, 34, 46, 0.1);
+  --diff-added-strong: rgba(26, 127, 55, 0.25);
+  --diff-removed-strong: rgba(207, 34, 46, 0.25);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  --scrollbar: rgba(0, 0, 0, 0.18);
+}

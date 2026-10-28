@@ -1,0 +1,270 @@
+/* Workspace tab strip and window layout. Owner: window manager. */
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.win-hosts {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.win-host {
+  /* Absolute with inset 0 gives a definite size and is a containing block for overlays. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.win-host.hidden {
+  display: none;
+}
+
+.win-strip {
+  --win-strip-h: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: var(--win-strip-h);
+  padding: 0 8px 0 6px;
+  gap: 2px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  font: var(--font-size-ui) var(--font-ui);
+  color: var(--fg-muted);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.win-strip.mac {
+  --win-strip-h: 38px;
+}
+
+/* Space for the traffic lights. */
+.win-inset {
+  display: none;
+  flex: none;
+  height: 100%;
+}
+
+.win-strip.mac .win-inset {
+  display: block;
+  width: 72px;
+}
+
+.win-strip.mac.fullscreen .win-inset {
+  display: none;
+}
+
+.win-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.win-filler {
+  flex: 1;
+  align-self: stretch;
+  min-width: 24px;
+}
+
+.win-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Width follows the folder name; tabs shrink only when the strip is full. */
+  flex: 0 1 auto;
+  min-width: 84px;
+  max-width: 240px;
+  height: 28px;
+  padding: 0 6px 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  cursor: default;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.win-tab:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.win-tab.active {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.win-tab.dragging {
+  z-index: 2;
+  box-shadow: var(--shadow);
+  opacity: 0.95;
+  transition: none;
+}
+
+.win-tabs.reordering .win-tab:not(.dragging) {
+  transition: transform 0.12s;
+}
+
+.win-tab-icon {
+  display: flex;
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.win-tab.active .win-tab-icon {
+  color: var(--accent);
+}
+
+.win-tab-icon svg,
+.win-tab-close svg,
+.win-plus svg {
+  width: 14px;
+  height: 14px;
+}
+
+.win-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.win-tab-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-faint);
+  font-size: 12px;
+}
+
+.win-tab-close {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 4px;
+  color: var(--fg-muted);
+}
+
+.win-tab-close svg {
+  display: none;
+}
+
+.win-tab-dot {
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+
+.win-tab.dirty .win-tab-dot {
+  display: block;
+}
+
+.win-tab:hover .win-tab-close svg,
+.win-tab.active:not(.dirty) .win-tab-close svg {
+  display: block;
+}
+
+.win-tab:hover .win-tab-dot {
+  display: none;
+}
+
+.win-tab-close:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.win-plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: default;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.win-plus:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.win-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 160px;
+  max-width: 420px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  font: var(--font-size-ui) var(--font-ui);
+  color: var(--fg);
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.win-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.win-menu-item.selected {
+  background: var(--active);
+}
+
+.win-menu-item.disabled {
+  color: var(--fg-faint);
+}
+
+.win-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.win-menu-hint {
+  color: var(--fg-faint);
+  font-size: 12px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.win-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kestrel",
+  "version": "0.1.0",
+  "identifier": "dev.kestrel.editor",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Kestrel",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 480,
+        "minHeight": 320,
+        "visible": false,
+        "backgroundColor": "#1f2023",
+        "zoomHotkeysEnabled": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 20
+        }
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' ipc: http://ipc.localhost",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline' preview: http://preview.localhost",
+        "img-src": "'self' data: blob: https: preview: http://preview.localhost",
+        "font-src": "'self' data: preview: http://preview.localhost",
+        "media-src": "'self' blob: preview: http://preview.localhost",
+        "frame-src": "'self' blob: preview: http://preview.localhost"
+      },
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Small and fast code editor",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
+    "copyright": "MIT License",
+    "longDescription": "Kestrel is a small and fast code editor for big codebases: markdown and HTML viewer, syntax colors for Kotlin, Java, JS, Python, HTML and SQL, git diff, history and blame, and language servers."
+  }
+}

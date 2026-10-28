@@ -1,0 +1,156 @@
+/* CSV table preview and the column colors of the raw text. Colors come from
+   the theme variables, so both themes work. */
+.csv-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--csv-fs, 13px);
+}
+.csv-root.is-resizing,
+.csv-root.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+.csv-label {
+  color: var(--fg-muted);
+}
+.csv-select {
+  height: 20px;
+  max-width: 150px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+.csv-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  user-select: none;
+}
+.csv-viewport[hidden],
+.csv-empty[hidden] {
+  display: none;
+}
+.csv-sizer {
+  position: relative;
+}
+.csv-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
+}
+.csv-body {
+  position: absolute;
+  left: 0;
+}
+.csv-row {
+  position: absolute;
+  left: 0;
+}
+.csv-row.is-odd {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.csv-cell,
+.csv-hcell {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-right: 1px solid var(--border);
+}
+.csv-cell {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.csv-cell.is-selected {
+  background: var(--active);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.csv-rn,
+.csv-corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: block;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 0 6px;
+  text-align: right;
+  color: var(--fg-faint);
+  background: var(--bg-alt);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.csv-corner {
+  border-bottom: 0;
+}
+.csv-hcell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.csv-hcell:hover {
+  background: var(--hover);
+}
+.csv-hlabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.csv-sort {
+  flex: none;
+  font-size: 0.75em;
+  color: var(--accent);
+}
+.csv-grip {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  z-index: 1;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+.csv-grip:hover {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.csv-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+}
+
+/* Raw text: one color for each column. */
+.cm-content .csv-c0 { color: var(--tok-function); }
+.cm-content .csv-c1 { color: var(--tok-type); }
+.cm-content .csv-c2 { color: var(--tok-builtin); }
+.cm-content .csv-c3 { color: var(--tok-tag); }
+.cm-content .csv-c4 { color: var(--tok-keyword); }
+.cm-content .csv-c5 { color: var(--tok-control); }
+.cm-content .csv-c6 { color: var(--tok-string); }
+.cm-content .csv-c7 { color: var(--tok-constant); }
+.cm-content .csv-sep { color: var(--fg-faint); }
+.cm-line.csv-hdr-line { font-weight: 600; }
