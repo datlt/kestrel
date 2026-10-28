@@ -68,6 +68,20 @@ typescript-language-server --version
 
 Kestrel starts it as `typescript-language-server --stdio` for the languages `javascript`, `typescript`, `jsx` and `tsx`. The project root is the nearest folder with `tsconfig.json`, `jsconfig.json` or `package.json`.
 
+## Swift
+
+Server: `sourcekit-lsp`. Xcode and the Swift toolchain from swift.org include it, so on a Mac with Xcode you do not need to install anything.
+
+Check it:
+
+```sh
+sourcekit-lsp --help
+```
+
+Kestrel starts it as `sourcekit-lsp` for the language `swift`. The project root is the nearest folder with `Package.swift`, `buildServer.json`, `compile_commands.json` or `.sourcekit-lsp`, else the open folder.
+
+For a Swift package (`Package.swift`) the server knows every file. For an Xcode project it only knows the file you edit, unless you set up a build server (for example `xcode-build-server`) and build the project once. Find Usages and the class diagram do not need the server: Kestrel reads the Swift files itself.
+
 ## The `lsp.servers` setting
 
 Put this in `settings.json`. Your value replaces the whole default value of `lsp.servers`.
@@ -97,6 +111,11 @@ Default value:
     "command": ["jdtls"],
     "languages": ["java"],
     "rootMarkers": ["settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle", "pom.xml", ".project"]
+  },
+  "swift": {
+    "command": ["sourcekit-lsp"],
+    "languages": ["swift"],
+    "rootMarkers": ["Package.swift", "buildServer.json", "compile_commands.json", ".sourcekit-lsp"]
   },
   "typescript": {
     "command": ["typescript-language-server", "--stdio"],

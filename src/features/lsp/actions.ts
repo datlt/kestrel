@@ -104,6 +104,27 @@ export async function findReferences(view: EditorView, ctx: AppContext): Promise
   });
 }
 
+/**
+ * The references of the name at a position (1-based line and column, UTF-16 units),
+ * with the declaration. The Usages panel calls this through `lsp.referencesAt`.
+ * Errors are thrown. The caller decides what to do.
+ */
+export async function referencesAt(view: EditorView, line: number, column: number): Promise<Location[] | null> {
+  const plugin = LSPPlugin.get(view);
+  if (!plugin) return null;
+  const doc = view.state.doc;
+  const text = doc.line(Math.min(Math.max(line, 1), doc.lines));
+  const pos = Math.min(text.from + Math.max(column - 1, 0), text.to);
+  const { client } = plugin;
+  client.sync();
+  const locations = await client.request<unknown, Location[] | null>('textDocument/references', {
+    textDocument: { uri: plugin.uri },
+    position: plugin.toPosition(pos),
+    context: { includeDeclaration: true },
+  });
+  return locations ?? [];
+}
+
 interface WorkspaceEdit {
   changes?: Record<string, TextEdit[]>;
   documentChanges?: ({ textDocument: { uri: string }; edits: TextEdit[] } | { kind: string })[];

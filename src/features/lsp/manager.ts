@@ -21,6 +21,7 @@ const INSTALL_HINTS: Record<string, string> = {
   'kotlin-lsp': 'Install the JetBrains Kotlin language server: brew install JetBrains/utils/kotlin-lsp',
   jdtls: 'Install the Eclipse Java language server: brew install jdtls',
   'typescript-language-server': 'Install it with: npm i -g typescript typescript-language-server',
+  'sourcekit-lsp': 'Install Xcode, or the Swift toolchain from swift.org. Both include sourcekit-lsp.',
 };
 
 function programName(command: string): string {

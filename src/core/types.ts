@@ -568,7 +568,7 @@ export interface EditorService {
   /**
    * Language id from the file name: `kotlin`, `java`, `javascript`, `typescript`,
    * `jsx`, `tsx`, `python`, `html`, `css`, `sql`, `json`, `markdown`, `xml`,
-   * `yaml`, `rust`, `go`, `cpp`, `shell`, `groovy`, `properties`, `toml`,
+   * `yaml`, `rust`, `go`, `swift`, `cpp`, `shell`, `groovy`, `properties`, `toml`,
    * `dockerfile`, `diff`, `plaintext`.
    */
   languageIdFor(path: string): string;

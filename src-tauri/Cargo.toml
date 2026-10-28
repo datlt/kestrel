@@ -29,3 +29,4 @@ kestrel-lsp = { workspace = true }
 kestrel-markdown = { workspace = true }
 kestrel-db = { workspace = true }
 kestrel-term = { workspace = true }
+kestrel-code = { workspace = true }

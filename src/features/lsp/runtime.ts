@@ -17,7 +17,7 @@ import { lintGutter, setDiagnostics } from '@codemirror/lint';
 import type { Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import type { AppContext } from '../../core/types';
-import { findReferences, renameSymbol, workspaceSymbols } from './actions';
+import { findReferences, referencesAt, renameSymbol, workspaceSymbols } from './actions';
 import type { LspManager } from './manager';
 import type { Session } from './session';
 import { pathToUri } from './uri';
@@ -118,7 +118,9 @@ export function editorExtension(
     lintGutter(),
     keymap.of([
       { key: 'F12', run: jumpToDefinition, preventDefault: true },
-      { key: 'Shift-F12', run: (v) => runAsync(v, () => findReferences(v, ctx)), preventDefault: true },
+      // While the server is not ready, the key goes on to the global command `lsp.findReferences`.
+      // That command opens the Usages panel, which uses the Kestrel index.
+      { key: 'Shift-F12', run: (v) => session.state === 'ready' && runAsync(v, () => findReferences(v, ctx)) },
       { key: 'F2', run: (v) => runAsync(v, () => renameSymbol(v, ctx)), preventDefault: true },
       { key: 'Shift-Alt-f', run: formatDocument, preventDefault: true },
     ]),
@@ -150,6 +152,7 @@ export const actions = {
   findReferences: (view: EditorView, ctx: AppContext): boolean => runAsync(view, () => findReferences(view, ctx)),
   rename: (view: EditorView, ctx: AppContext): boolean => runAsync(view, () => renameSymbol(view, ctx)),
   format: (view: EditorView): boolean => formatDocument(view),
+  referencesAt,
   workspaceSymbols,
 };
 

@@ -21,6 +21,13 @@ describe('highlightToHtmlString', () => {
     expect(highlightToHtmlString('<b>', null)).toBe('&lt;b&gt;');
   });
 
+  it('highlights Swift', async () => {
+    const swift = await loadLanguageById('swift');
+    const html = highlightToHtmlString('struct Point { let x: Int = 1 } // note', swift);
+    expect(html).toContain('<span class="tok-keyword">struct</span>');
+    expect(html).toContain('<span class="tok-comment">// note</span>');
+  });
+
   it('highlights lezer languages and code blocks in markdown', async () => {
     const js = await loadLanguageById('js');
     expect(highlightToHtmlString('const a = 1;', js)).toContain('<span class="tok-keyword">const</span>');

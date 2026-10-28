@@ -30,6 +30,8 @@ describe('languageIdFor', () => {
     ['/p/ci.yaml', 'yaml'],
     ['/p/lib.rs', 'rust'],
     ['/p/main.go', 'go'],
+    ['/p/Sources/App/ViewModel.swift', 'swift'],
+    ['/p/Package.swift', 'swift'],
     ['/p/a.cpp', 'cpp'],
     ['/p/a.h', 'cpp'],
     ['/p/run.sh', 'shell'],
@@ -56,7 +58,7 @@ describe('languageIdFor', () => {
     const ids = new Set(LANGUAGES.map((l) => l.id));
     for (const id of [
       'kotlin', 'java', 'javascript', 'typescript', 'jsx', 'tsx', 'python', 'html', 'css', 'sql', 'json', 'markdown',
-      'xml', 'yaml', 'rust', 'go', 'cpp', 'shell', 'groovy', 'properties', 'toml', 'dockerfile', 'diff', 'plaintext',
+      'xml', 'yaml', 'rust', 'go', 'swift', 'cpp', 'shell', 'groovy', 'properties', 'toml', 'dockerfile', 'diff', 'plaintext',
     ]) {
       expect(ids.has(id), id).toBe(true);
     }
@@ -68,6 +70,7 @@ describe('aliases and code fences', () => {
     expect(resolveLanguageId('kt')).toBe('kotlin');
     expect(resolveLanguageId('JS')).toBe('javascript');
     expect(resolveLanguageId('py')).toBe('python');
+    expect(resolveLanguageId('swift')).toBe('swift');
     expect(resolveLanguageId('ts')).toBe('typescript');
     expect(resolveLanguageId('yml')).toBe('yaml');
     expect(resolveLanguageId('nope')).toBeNull();

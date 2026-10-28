@@ -126,9 +126,12 @@ export function initLsp(ctx: AppContext): void {
   });
 
   // --- commands ---
+  // A server that is missing or crashed counts as no server, so the editor
+  // menu and the palette do not offer commands that cannot work.
   const lspEditor = (): FileEditor | null => {
     const editor = ctx.editors.active();
-    return editor && manager.sessionOfPath(editor.path) ? editor : null;
+    const session = editor && manager.sessionOfPath(editor.path);
+    return session && (session.state === "starting" || session.state === "ready") ? editor : null;
   };
   const inEditor =
     (
@@ -157,8 +160,34 @@ export function initLsp(ctx: AppContext): void {
       title: "Find References",
       category,
       keybinding: "Shift-F12",
-      when: () => !!lspEditor(),
-      run: inEditor((rt, e) => rt.actions.findReferences(e.view, ctx)),
+      when: () => !!ctx.editors.active(),
+      run: () => {
+        // With a ready server, show the quick pick. Without one, use Find Usages (Kestrel index).
+        const editor = lspEditor();
+        const rt = manager.loaded;
+        if (editor && rt && manager.sessionOfPath(editor.path)?.state === "ready") {
+          rt.actions.findReferences(editor.view, ctx);
+          return;
+        }
+        if (ctx.commands.get("usages.find")) return ctx.commands.execute("usages.find");
+        ctx.ui.notify("No language server is ready for this file.");
+      },
+    },
+    {
+      // Used by the Usages panel. Returns the locations of the server, or null when
+      // the file is not open, has no language server, or the server is not ready.
+      id: "lsp.referencesAt",
+      title: "Find References at Position",
+      category,
+      hidden: true,
+      run: async (arg?: { path?: string; line?: number; column?: number }) => {
+        const { path, line, column } = arg ?? {};
+        if (typeof path !== "string" || typeof line !== "number" || typeof column !== "number") return null;
+        const editor = ctx.editors.get(path);
+        const rt = manager.loaded;
+        if (!editor || !rt || manager.sessionOfPath(path)?.state !== "ready") return null;
+        return rt.actions.referencesAt(editor.view, line, column);
+      },
     },
     {
       id: "lsp.rename",

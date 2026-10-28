@@ -2407,6 +2407,7 @@ dependencies = [
 name = "kestrel"
 version = "0.1.0"
 dependencies = [
+ "kestrel-code",
  "kestrel-common",
  "kestrel-db",
  "kestrel-fs",
@@ -2425,6 +2426,22 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-window-state",
  "tokio",
+]
+
+[[package]]
+name = "kestrel-code"
+version = "0.1.0"
+dependencies = [
+ "ignore",
+ "kestrel-common",
+ "kestrel-lang",
+ "log",
+ "memchr",
+ "parking_lot",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2486,6 +2503,13 @@ dependencies = [
  "parking_lot",
  "serde",
  "tempfile",
+]
+
+[[package]]
+name = "kestrel-lang"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

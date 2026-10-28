@@ -284,6 +284,10 @@ export class FileEditorImpl implements FileEditor, TabContent {
       selection: EditorSelection.cursor(pos),
       effects: EditorView.scrollIntoView(pos, { y: 'center' }),
     });
+    // A file that just opened can still change its layout in the next frame
+    // (gutter width, tab size). Measure again, so the cursor and the selection
+    // are drawn at the right place.
+    requestAnimationFrame(() => this.view.requestMeasure());
   }
 
   /** Reveal for callers that open a file at a line. The preview follows when the code is hidden. */

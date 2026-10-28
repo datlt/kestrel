@@ -264,16 +264,20 @@ Use these ids and keys. `Mod` = Cmd on macOS, Ctrl elsewhere. Keys marked
 | `lsp.format` | Shift-Alt-f | lsp, editor |
 | `lsp.workspaceSymbols` | Mod-t | lsp |
 | `lsp.restart` | (palette) | lsp |
+| `usages.find` | Alt-F7 (Shift-F12 without a ready server) | usages |
+| `usages.next` / `usages.prev` | F4 / Shift-F4 | usages |
+| `diagram.showForCursor` | Mod-Alt-u | diagram |
+| `diagram.showForFile` / `diagram.showForFolder` | (palette, explorer menu) | diagram |
 
 View ids: sidebar `explorer` (order 10), `search` (20), `git` (30);
-panel `problems` (10), `lsp-output` (20).
+panel `problems` (10), `usages` (15), `lsp-output` (20).
 
 Status bar ids: left `git.branch` (100), `lsp.status` (50);
 right `editor.cursor` (100), `editor.indent` (90), `editor.encoding` (80),
 `editor.eol` (70), `editor.language` (60), `preview.info` (40).
 
 Tab kinds and ids: `file` (`file:<path>`), `diff` (`diff:<base>:<path>`),
-`image` (`image:<path>`).
+`image` (`image:<path>`), `diagram` (`diagram:<n>`).
 
 ## 7. Feature specs
 
@@ -726,3 +730,178 @@ Output goes to the frontend through a `Channel` in raw byte batches. The
 frontend uses `@xterm/xterm` (lazy chunk) in the bottom panel view
 `terminal`: several terminal tabs, and each tab can split into panes side by
 side or above each other.
+
+## 11. Round 5: class diagram, find usages, Swift
+
+### 11.1 Ownership
+
+| Area | Owner | Files |
+|------|-------|-------|
+| Kotlin and Java parsers | lang-jvm | `crates/kestrel-lang/src/{kotlin.rs, java.rs, jvm_lex.rs}` (and sub modules under `src/kotlin/`, `src/java/`), `crates/kestrel-lang/tests/{kotlin,java}*.rs`, `crates/kestrel-lang/tests/fixtures/{kotlin,java}/**` |
+| Swift parser | lang-swift | `crates/kestrel-lang/src/swift.rs` (and sub modules under `src/swift/`), `crates/kestrel-lang/tests/swift*.rs`, `crates/kestrel-lang/tests/fixtures/swift/**` |
+| Code index | code-index | `crates/kestrel-code/**`, `src-tauri/src/cmd/code.rs`, the `code_*` section at the end of `scripts/dev-bridge.mjs` |
+| Class diagram UI | diagram | `src/features/diagram/**`, the "Show Class Diagram" items in `menuFor` of `src/features/files/explorer.ts` |
+| Find usages UI | usages | `src/features/usages/**`, `src/editor/context-menu.ts` (new) and the line in `src/editor/setup.ts` that adds it, the `lsp.referencesAt` command and the Shift-F12 fallback in `src/features/lsp/{index.ts,actions.ts,runtime.ts}` |
+| Contracts and wiring | integrator | `crates/kestrel-lang/src/{lib.rs, model.rs}`, `src/ipc/code.ts`, Cargo and npm manifests, `cmd/mod.rs`, `src/window/workbench.ts`, `src/core/**`, Swift language support |
+
+The contracts are `crates/kestrel-lang/src/model.rs` (what a parser returns)
+and `src/ipc/code.ts` (what the frontend gets). Read them first. If a
+contract must change, describe the change in your report.
+
+### 11.2 Parsers (`kestrel-lang`)
+
+Hand-written, single pass, no regex, no allocations per token. They read
+packages, imports, types, supertypes, members and the type names that bodies
+use (`TypeDecl::used_types`). They skip the logic inside bodies. Target speed:
+more than 100 MB of source per second on one core in a release build. They
+must survive broken code, unclosed strings and comments, and files of 5 MB.
+
+`find_identifiers(lang, text, name)` lists every use of one name in code
+(not in comments or strings) with a `UsageKind` and the dotted qualifier
+before it. It must be fast: files that do not contain the name as bytes are
+not passed to it (the caller checks first).
+
+Language notes:
+
+- Kotlin: nested block comments; `"..."` with `${...}` templates, `"""` raw
+  strings; backtick names; annotations with use-site targets; `data`,
+  `sealed`, `value`, `enum`, `annotation`, `fun interface`, `object`,
+  `companion object` (name `Companion` when it has none); primary
+  constructor `val`/`var` parameters are properties; `: Base(args)` is
+  `Extends`; `: I by x` is delegated; extension functions keep the
+  receiver; `typealias`; generic bounds and `where`; top-level members.
+- Java: `class`, `interface`, `enum` (constants are `EnumCase`), `record`
+  (components are fields), `@interface`; `extends`, `implements`, interface
+  `extends` (`Implements`), `permits` is ignored; text blocks `"""`;
+  several fields in one declaration (`int a, b;`); arrays and varargs;
+  anonymous and local classes are not types, but their names go to
+  `used_types`.
+- Swift: `class`, `struct`, `enum` (`case a, b(Int)`), `protocol`, `actor`,
+  `extension` (kind `Extension`, name = extended type); attributes
+  (`@objc`, `@MainActor`, `@Published`); `"..."` with `\(...)`, `"""`,
+  raw strings `#"..."#` with any number of `#`; nested comments;
+  inheritance list entries are `Unknown`; `[Foo]`, `[K: V]`, `Foo?`
+  sugar (see `TypeRef::name`); computed properties; `init`, `subscript`
+  (a method named `subscript`), `static` and `class` members.
+
+### 11.3 Code index (`kestrel-code`, `cmd/code.rs`)
+
+- One index per workspace root, shared by the windows that use the root
+  (ref count by window label, freed by `code_index_drop` and
+  `on_window_destroyed`). Built on the first diagram or usages request, in
+  parallel (rayon), from the Kotlin, Java and Swift files under the root.
+  The walk follows `.gitignore` (crate `ignore`, hidden files seen, no
+  `.git`) and always skips `.gradle`, `.idea`, `node_modules`, `Pods`,
+  `Carthage`, `DerivedData`, `.build`, `.swiftpm`, and `build`, `out` or
+  `target` folders next to a `build.gradle(.kts)`, `pom.xml` or
+  `Package.swift`. Files bigger than 5 MB are skipped.
+- The index keeps the `FileModel` of each file and no file text. Memory
+  goal: under 60 MB for 16,000 Kotlin files (120 MB of source).
+- Name resolution, in this order: type parameters; nested types of the
+  current type and its outer types; types of the same file; explicit
+  imports (and aliases); the same package; wildcard imports; Kotlin
+  default imports (`kotlin.*`, `kotlin.collections.*`) and `java.lang`
+  for Java; for Swift and when nothing else matched: a unique simple name
+  in the project, else the one with the longest common path with the file.
+  Dotted names (`a.b.Foo`, `Outer.Inner`) resolve by their parts.
+- Edges: `extends` / `implements` from supertypes (`Unknown` becomes
+  `implements` when the target is an interface or protocol, else
+  `extends`; for an unresolved Swift class the first entry is `extends`
+  when its name does not end in `Protocol`, `Delegate`, `DataSource` or
+  `able`, `ible`); `composition` and `aggregation` from field and property
+  types (aggregation when the type is a collection, map, array or
+  sequence of the part, see the type names in the code); `dependency` from
+  parameter and return types and `used_types` when no other edge joins the
+  two types; `nested` from `outer`. Swift extensions merge into their type.
+  Edges to types that are not in the project only appear with
+  `includeExternal`, and never to basic types (`String`, `Int`, `Long`,
+  `Boolean`, `Any`, `Object`, `Unit`, `List` ...: see the list in the code).
+- `code_diagram(id, request)`: start types from the scope, then a breadth
+  first walk over the chosen relations up to `depth`, in the chosen
+  direction, until `maxNodes`. Members are cut at 60 per list.
+- `code_usages(id, request)`: finds the name at the position (identifier
+  characters around the column, not in a comment or string), decides what
+  it is (`UsageSymbol::kind`) and searches the files of the same language
+  family (Kotlin with Java, Swift alone). The bytes of the name filter the
+  files first (`memchr::memmem`), then `find_identifiers` runs. For types,
+  a match counts when that file resolves the name to the same type (so
+  `Foo` from another package without an import is not a match). For
+  members, files that name the owner type or a related type are `likely`.
+  Calls of a type name become `instantiation`. Other languages: a whole
+  word search in files with the same extension, `exact: false`.
+- Requests run on a blocking thread, keyed by (window label, id) for
+  `code_cancel`. A request waits while the index builds.
+- `code_index_update(root, paths, rescan)` parses only the changed files.
+- Dev bridge: `crates/kestrel-code/examples/dev_http.rs` serves the same
+  commands on 127.0.0.1:1436 (`KESTREL_CODE_DEV_PORT`), and
+  `scripts/dev-bridge.mjs` passes `code_*` calls to it, like `db_*`.
+
+### 11.4 Class diagram UI (`src/features/diagram/**`)
+
+- Tab kind `diagram`, id `diagram:<n>`, restored with its scope and options.
+  Title: the start type (`FooService`), the file name, or the folder name.
+- Commands: `diagram.showForCursor` "Show Class Diagram" (Mod-Alt-u, for
+  Kotlin, Java and Swift editors), `diagram.showForFile`,
+  `diagram.showForFolder` (argument: folder path; also in the explorer
+  menu of folders and of `.kt`, `.java`, `.swift` files).
+- Toolbar: one toggle per relation kind (with its line style as the icon),
+  depth (0 to 5), direction (Supertypes / Subtypes and users / Both),
+  members (None / Public / All), library types on or off, layout direction
+  (top to bottom, left to right), fit, zoom, search a type, and Export
+  (Copy as Mermaid, Copy as PlantUML, Save as SVG). Options are kept in
+  `globalState` `diagram.options` for the next diagram.
+- Layout: `@dagrejs/dagre` (lazy chunk), supertypes above subtypes (the
+  edge goes from the superclass rank down to the subclass rank). Drawing:
+  SVG with UML markers (hollow triangle for extends, dashed line with
+  hollow triangle for implements, filled diamond at the owner for
+  composition, hollow diamond for aggregation, dashed open arrow for
+  dependency, circle with a plus at the outer type for nested). Theme
+  variables only. Pan with drag and the scroll wheel, zoom with
+  Mod-wheel, pinch, and the tab `zoom()` keys.
+- Nodes: stereotype line (`«interface»`, `«data»`, `«enum»`, `«object»`,
+  `«protocol»`, `«struct»`, annotation names like `«Service»`), name, then
+  fields and methods when the members option is on. The start types have
+  an accent border. External types are grey. Click selects and highlights
+  the edges of the node; double click opens the file at the line;
+  context menu: Open, Focus on This Type (new start), Add Supertypes, Add
+  Subtypes, Hide, Find Usages (`usages.find` with the path and line).
+- Big results: a note when `truncated`, a spinner with Cancel while the
+  index builds. The index follows `fs:changed` (only `.kt`, `.kts`,
+  `.java`, `.swift` paths, debounced) through `codeIndexUpdate`, and
+  `codeIndexDrop` runs on `workspace:will-change`.
+
+### 11.5 Find usages UI (`src/features/usages/**`)
+
+- Command `usages.find` "Find Usages" (Alt-F7). Optional argument
+  `{ path, line, column }` (from the diagram), else the cursor of the active
+  editor. It tries the language server first: hidden command
+  `lsp.referencesAt` (`{ path, line, column }`, returns the LSP locations,
+  or null when no server is ready for the file). With no ready server, an
+  error, an empty answer, or no answer within 10 seconds, it uses
+  `codeUsages`. Swift files use `codeUsages` first, because
+  `sourcekit-lsp` only knows other files after a build.
+- Bottom panel view `usages` (order 15, title "Usages"): header with the
+  symbol, the count, the source ("Language server" or "Kestrel index"),
+  an "exact" or "name only" note, Search Again, and a switch to the other
+  source. A virtualized tree: groups by kind (Declaration, Imports,
+  Supertypes, New instances, Type uses, Calls, Other), or by folder and
+  file (a toggle), with the matched name in bold. Files with
+  `likely: false` go into a closed group "Same name, maybe other symbols".
+  A filter box, expand and collapse all, a history of the last 10
+  searches. Enter or click opens the match; `usages.next` /
+  `usages.prev` (F4 / Shift-F4) move through the matches in the editor.
+- Shift-F12 (`lsp.findReferences`) runs `usages.find` when the file has no
+  ready language server.
+- Editor context menu (`src/editor/context-menu.ts`, the engine adds it to
+  every file editor): Go to Definition, Find Usages, Show Class Diagram,
+  Rename Symbol, Format Document (each only when its command exists and
+  applies), then Cut, Copy, Paste, Select All.
+
+### 11.6 Swift
+
+- Language `swift` (`.swift`): colors from the CodeMirror legacy Swift mode.
+- Default language server `swift`: `sourcekit-lsp` (part of Xcode and of
+  the Swift toolchain), root markers `Package.swift`, `buildServer.json`,
+  `compile_commands.json`, `.sourcekit-lsp`. Without a build server an Xcode
+  project gets only single-file features, so find usages and the class
+  diagram use the Kestrel index for Swift too.

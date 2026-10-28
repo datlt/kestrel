@@ -1936,6 +1936,64 @@ function forwardDb(cmd, args) {
 
 const dbCommands = Object.fromEntries(DB_COMMANDS.map((cmd) => [cmd, (args) => forwardDb(cmd, args)]));
 
+// --- code_* ------------------------------------------------------------------
+
+// The code index (class diagram, find usages) runs in real Rust code.
+// `crates/kestrel-code/examples/dev_http.rs` is a small HTTP server
+// (127.0.0.1:1436) with the same CodeManager as the app. Start it with:
+//   cargo run -p kestrel-code --example dev_http
+const CODE_HTTP_HOST = '127.0.0.1';
+const CODE_HTTP_PORT = Number(process.env.KESTREL_CODE_DEV_PORT || 1436);
+const CODE_START_HINT = 'start: cargo run -p kestrel-code --example dev_http';
+const CODE_COMMANDS = [
+  'code_index_status',
+  'code_index_update',
+  'code_index_drop',
+  'code_cancel',
+  'code_diagram',
+  'code_usages',
+];
+
+/** Sends one command to the dev_http server. No timeout: an index build can take long. */
+function forwardCode(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(args ?? {}), 'utf8');
+    const req = http.request(
+      {
+        host: CODE_HTTP_HOST,
+        port: CODE_HTTP_PORT,
+        path: `/invoke/${cmd}`,
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': body.length },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (d) => chunks.push(d));
+        res.on('error', (e) => reject(new KError('internal', `code dev_http: ${e.message}`)));
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            return reject(new KError('internal', `code dev_http sent an answer that is not JSON (status ${res.statusCode})`));
+          }
+          if (res.statusCode === 200) return resolve(json);
+          reject(new KError(String(json?.code ?? 'internal'), String(json?.message ?? `code dev_http status ${res.statusCode}`)));
+        });
+      },
+    );
+    req.on('error', (e) => {
+      if (e?.code === 'ECONNREFUSED' || e?.code === 'ECONNRESET' || e?.code === 'EHOSTUNREACH') {
+        return reject(new KError('internal', CODE_START_HINT));
+      }
+      reject(new KError('internal', `code dev_http: ${e?.message ?? e}`));
+    });
+    req.end(body);
+  });
+}
+
+const codeCommands = Object.fromEntries(CODE_COMMANDS.map((cmd) => [cmd, (args) => forwardCode(cmd, args)]));
+
 // --- Dispatch ----------------------------------------------------------------
 
 const commands = {
@@ -1947,6 +2005,7 @@ const commands = {
   ...lspCommands,
   ...previewCommands,
   ...dbCommands,
+  ...codeCommands,
 };
 
 const CHANNEL_PREFIX = '__CHANNEL__:';

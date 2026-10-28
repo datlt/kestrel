@@ -1,0 +1,139 @@
+/* Class diagram. All classes start with `diagram-`. Colors come from the theme
+   variables of src/styles/vars.css, so both themes work. */
+
+.diagram-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+.diagram-root [hidden] { display: none !important; }
+
+/* --- Toolbar -------------------------------------------------------------- */
+.diagram-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+.diagram-group { display: flex; flex-wrap: wrap; gap: 4px; }
+.diagram-sep { width: 1px; height: 16px; background: var(--border); flex: none; }
+.diagram-spacer { flex: 1; min-width: 0; }
+.diagram-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.diagram-btn:hover { background: var(--hover); color: var(--fg); }
+.diagram-btn:focus-visible, .diagram-select:focus-visible, .diagram-search-input:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.diagram-btn[aria-pressed='true'] { background: var(--active); border-color: var(--accent); color: var(--fg); }
+.diagram-icon-btn { width: 26px; padding: 0; justify-content: center; border-color: transparent; }
+.diagram-icon-btn svg, .diagram-tool svg, .diagram-search-icon svg, .diagram-search-clear svg { width: 14px; height: 14px; flex: none; }
+.diagram-tool { gap: 4px; }
+.diagram-rel { padding: 0 8px 0 4px; }
+.diagram-sample { flex: none; overflow: visible; }
+.diagram-field { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); }
+.diagram-field-label { font-size: 11px; }
+.diagram-select {
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.diagram-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 190px;
+  height: 24px;
+  padding: 0 4px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg-muted);
+}
+.diagram-search:focus-within { border-color: var(--focus-ring); }
+.diagram-search-input { flex: 1; min-width: 0; border: 0; outline: 0 !important; background: transparent; color: var(--fg); font: inherit; font-size: 12px; }
+.diagram-search-count { flex: none; font-size: 11px; color: var(--fg-faint); }
+.diagram-search-clear { flex: none; display: inline-flex; padding: 2px; border: 0; background: transparent; color: var(--fg-muted); cursor: pointer; border-radius: 3px; }
+.diagram-search-clear:hover { background: var(--hover); color: var(--fg); }
+
+.diagram-note { flex: none; padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--bg-alt); color: var(--warn); font-size: 12px; }
+.diagram-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
+
+/* --- Canvas --------------------------------------------------------------- */
+.diagram-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.diagram-canvas.is-panning { cursor: grabbing; }
+.diagram-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.diagram-canvas:focus-visible::after { content: ''; position: absolute; inset: 0; border: 1px solid var(--focus-ring); pointer-events: none; opacity: 0.5; }
+
+.diagram-node { cursor: pointer; }
+.diagram-node text { pointer-events: none; }
+.diagram-node:hover .diagram-box { stroke: var(--fg-muted) !important; }
+.diagram-node.is-focus:hover .diagram-box { stroke: var(--accent) !important; }
+.diagram-node.is-sel .diagram-box { stroke: var(--accent) !important; stroke-width: 2.5px !important; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25)); }
+.diagram-member:hover .diagram-member-hit { fill: var(--hover) !important; }
+
+/* Selection: the node, its neighbors and the edges between them stay clear. The rest fades. */
+.diagram-canvas.has-selection .diagram-node:not(.is-sel):not(.is-near) { opacity: 0.25; }
+.diagram-canvas.has-selection .diagram-edge:not(.is-hot) { opacity: 0.12; }
+.diagram-edge.is-hot path { stroke: var(--accent) !important; }
+
+/* --- Legend --------------------------------------------------------------- */
+.diagram-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-size: 11px;
+  cursor: default;
+  opacity: 0.92;
+}
+.diagram-legend-title { color: var(--fg-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.diagram-legend-row { display: flex; align-items: center; gap: 8px; }
+
+/* --- Overlay: loading and messages --------------------------------------- */
+.diagram-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--bg) 55%, transparent); cursor: default; }
+.diagram-overlay.is-solid { background: var(--bg); }
+.diagram-card { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 460px; padding: 18px 22px; text-align: center; }
+.diagram-message { color: var(--fg-muted); font-size: 13px; line-height: 1.5; }
+.diagram-spinner { width: 22px; height: 22px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: diagram-spin 0.8s linear infinite; }
+@keyframes diagram-spin { to { transform: rotate(360deg); } }

@@ -305,6 +305,14 @@ export function createExplorer(ctx: AppContext): Explorer {
         separatorBefore: true,
       });
     }
+    const diagramCommand = !n || n.isDir ? 'diagram.showForFolder' : /\.(kt|kts|java|swift)$/i.test(n.name) ? 'diagram.showForFile' : null;
+    if (diagramCommand && ctx.commands.get(diagramCommand)) {
+      items.push({
+        label: 'Show Class Diagram',
+        run: () => void ctx.commands.execute(diagramCommand, path).catch((e) => ctx.ui.notify(`Cannot show the diagram: ${errorText(e)}`, { kind: 'error' })),
+        separatorBefore: !(n && !n.isDir && ctx.commands.get('git.fileHistory')),
+      });
+    }
     if (!n || n.isDir) {
       items.push(
         {

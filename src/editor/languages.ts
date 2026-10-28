@@ -53,6 +53,7 @@ export const LANGUAGES: LanguageInfo[] = [
   { id: 'yaml', label: 'YAML', aliases: ['yml'], extensions: ['yml', 'yaml'], filenames: [] },
   { id: 'rust', label: 'Rust', aliases: ['rs'], extensions: ['rs'], filenames: [] },
   { id: 'go', label: 'Go', aliases: ['golang'], extensions: ['go'], filenames: [] },
+  { id: 'swift', label: 'Swift', aliases: [], extensions: ['swift'], filenames: [] },
   {
     id: 'cpp',
     label: 'C/C++',
@@ -165,6 +166,7 @@ const loaders: Record<string, Loader> = {
   yaml: async () => (await import('@codemirror/lang-yaml')).yaml(),
   rust: async () => (await import('@codemirror/lang-rust')).rust(),
   go: async () => (await import('@codemirror/lang-go')).go(),
+  swift: async () => legacy((await import('@codemirror/legacy-modes/mode/swift')).swift),
   cpp: async () => (await import('@codemirror/lang-cpp')).cpp(),
   shell: async () => legacy((await import('@codemirror/legacy-modes/mode/shell')).shell),
   groovy: async () => legacy((await import('@codemirror/legacy-modes/mode/groovy')).groovy),

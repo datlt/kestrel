@@ -58,8 +58,8 @@ the whole picture, and quick when you go down to the exact line.
   Switching tabs is instant.
 - **Big files and big folders.** Directory walk, search, git and markdown
   rendering run in Rust threads. Long lists only draw the visible rows.
-- **Syntax colors** for Kotlin, Java, JavaScript, TypeScript, Python, HTML,
-  CSS, SQL, JSON, Markdown, XML, YAML, Rust, Go, C++, Groovy and more.
+- **Syntax colors** for Kotlin, Java, Swift, JavaScript, TypeScript, Python,
+  HTML, CSS, SQL, JSON, Markdown, XML, YAML, Rust, Go, C++, Groovy and more.
 - **Viewers.** Markdown and HTML preview (code, split or preview mode), CSV and
   TSV as a sortable table, images.
 - **Git.** Changes view, side-by-side and unified diff, compare with any branch,
@@ -78,7 +78,13 @@ the whole picture, and quick when you go down to the exact line.
   your code (Web view on the left). You log in once inside Kestrel; it keeps
   the login. Kestrel cannot use the login of Chrome, because Chrome keeps its
   cookies in its own encrypted store.
-- **Language servers (LSP)** for Kotlin, Java, JavaScript and TypeScript:
+- **Class diagrams** for Kotlin, Java and Swift. Pick the relations you want
+  to see: inheritance, interfaces, composition, aggregation, dependencies,
+  nested types. Copy the diagram as Mermaid or PlantUML. See
+  [Class diagrams and Find Usages](#class-diagrams-and-find-usages).
+- **Find Usages** (Alt-F7) like IntelliJ, grouped into imports, supertypes,
+  new instances, type uses and calls. It works without a language server.
+- **Language servers (LSP)** for Kotlin, Java, Swift, JavaScript and TypeScript:
   completion, hover, go to definition, references, rename, format, problems.
   See [docs/LSP.md](docs/LSP.md).
 - **Explorer** with file type icons, git colors, and compact folders like
@@ -221,10 +227,70 @@ Kestrel does not include the language servers. Install the ones you need:
 | Kotlin | `brew install JetBrains/utils/kotlin-lsp` (needs Java 17+) |
 | Java | `brew install jdtls` (needs Java 21+) |
 | JavaScript, TypeScript | `npm install -g typescript typescript-language-server` |
+| Swift | Nothing to install when you have Xcode (`sourcekit-lsp` is part of it) |
 
 Kestrel finds them in the PATH of your login shell, also when you start it from
 the Dock. Details, settings and troubleshooting are in
 [docs/LSP.md](docs/LSP.md).
+
+## Class diagrams and Find Usages
+
+Kestrel reads the Kotlin, Java and Swift files of the open folder itself, so
+both features work without a language server and without a build. The first
+use reads the whole folder: about 1 second for 16,000 Kotlin files. After
+that, a diagram or a search takes milliseconds to less than a second, and
+Kestrel reads only the files that change.
+
+### Class diagram
+
+Put the cursor on a class, interface, enum, object, struct or protocol and
+press **Mod-Alt-u** (or right-click, Show Class Diagram). You can also
+right-click a file or a folder in the Explorer: the diagram then shows all
+types in it.
+
+The toolbar decides what you see:
+
+| Control | Meaning |
+|---------|---------|
+| Extends, Implements | Superclasses, interfaces and protocols |
+| Composition | A field or property holds one object of the other type |
+| Aggregation | A field or property holds a list, set, map or array of the other type |
+| Dependency | Parameters, return types and code in method bodies use the other type |
+| Nested | Types declared inside the type |
+| Depth | How many steps Kestrel follows from the start type (default 1) |
+| Follow | Supertypes and parts, subtypes and users, or both |
+| Members | Fields and methods in each box: none, public, all |
+| Library types | Also show types from the JDK and other libraries (grey boxes) |
+
+A type that many other types hold or use (a logger, a clock) gets a badge
+like **+306**. Kestrel does not draw those types at first, so the diagram
+stays readable. Right-click the box and choose Show More to add them.
+
+In the diagram: drag or scroll to move, Mod-scroll or pinch to zoom, click a
+box to see its relations, double-click to open the file. Right-click a box
+for Focus on This Type, Add Supertypes, Add Subtypes, Hide and Find Usages.
+**Export** copies the diagram as Mermaid or PlantUML text (for wiki pages)
+or saves it as an SVG file.
+
+### Find Usages
+
+Put the cursor on a name and press **Alt-F7** (or right-click, Find Usages).
+The Usages panel lists the results by kind: declarations, imports,
+supertypes, new instances, type uses, calls and other uses. Press F4 and
+Shift-F4 to go to the next and the previous usage.
+
+- **Types**: Kestrel checks the imports and the package of each file, so a
+  class with the same name in another package does not count.
+- **Methods and fields**: Kestrel matches the name in the files that use the
+  type, its supertypes and its subtypes. Matches in other files go into the
+  group "Same name, maybe other symbols", which starts closed.
+- **Local variables and parameters**: Kestrel searches the file. Press
+  "Search all files" to search the whole folder.
+
+When a language server is running for the file (Kotlin or Java), Find Usages
+asks it first and shows "Language server" in the panel. The button next to it
+switches to the Kestrel index. Shift-F12 also opens the Usages panel when no
+language server is running.
 
 ## Database (MySQL and Trino)
 
@@ -341,7 +407,7 @@ Main settings:
 | `preview.csvMode` | `"preview"` | Start mode of CSV and TSV files (`"code"` = raw text) |
 | `git.gutter` | `true` | Show changed lines in the gutter |
 | `lsp.enabled` | `true` | Turn language servers on or off |
-| `lsp.servers` | Kotlin, Java, TypeScript | Server commands, see [docs/LSP.md](docs/LSP.md) |
+| `lsp.servers` | Kotlin, Java, Swift, TypeScript | Server commands, see [docs/LSP.md](docs/LSP.md) |
 | `db.maxRows` | `1000` | Rows fetched per result in a SQL console |
 | `db.confirmWrites` | `"production"` | Ask before data changes: `"production"`, `"always"` or `"never"` |
 | `db.showSystemSchemas` | `false` | Show `mysql`, `sys`, `information_schema`, `performance_schema` |
@@ -383,6 +449,8 @@ Main settings:
 | Next or previous change | Alt-F5, Shift-Alt-F5 |
 | Go to definition | F12, Mod-click |
 | Find references | Shift-F12 |
+| Find usages, next or previous usage | Alt-F7, F4, Shift-F4 |
+| Class diagram of the type at the cursor | Mod-Alt-u |
 | Rename symbol | F2 |
 | Format document | Shift-Alt-f |
 | Workspace symbols | Mod-t |

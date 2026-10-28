@@ -41,6 +41,11 @@ export const DEFAULT_SETTINGS: Settings = {
       languages: ['java'],
       rootMarkers: ['settings.gradle.kts', 'settings.gradle', 'build.gradle.kts', 'build.gradle', 'pom.xml', '.project'],
     },
+    swift: {
+      command: ['sourcekit-lsp'],
+      languages: ['swift'],
+      rootMarkers: ['Package.swift', 'buildServer.json', 'compile_commands.json', '.sourcekit-lsp'],
+    },
     typescript: {
       command: ['typescript-language-server', '--stdio'],
       languages: ['javascript', 'typescript', 'jsx', 'tsx'],

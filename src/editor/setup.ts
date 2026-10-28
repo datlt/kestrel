@@ -36,6 +36,7 @@ import {
   type Command,
   type KeyBinding,
 } from '@codemirror/view';
+import { editorContextMenu } from './context-menu';
 import { kestrelHighlighter } from './highlight';
 import { kestrelTheme } from './theme';
 
@@ -178,6 +179,7 @@ export function baseExtensions(o: SetupOptions): Extension[] {
     search({ top: true }),
     keys,
     EditorView.domEventHandlers({ blur: () => o.onFocusLost() }),
+    editorContextMenu,
   ];
   if (o.large) return common;
 
