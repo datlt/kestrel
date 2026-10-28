@@ -229,4 +229,18 @@ impl CodeManager {
         req.root = r.path.to_string_lossy().into_owned();
         usages::run(&index, &req, cancel)
     }
+
+    pub fn callers(&self, owner: &str, req: &CallersRequest, cancel: &AtomicBool) -> Result<CallersResult> {
+        let r = self.acquire(owner, &req.root)?;
+        let index = self.index_of(&r, cancel)?;
+        let mut req = req.clone();
+        req.root = r.path.to_string_lossy().into_owned();
+        if let Some(at) = &mut req.at {
+            at.path = norm_str(&at.path);
+        }
+        if let Some(t) = &mut req.target {
+            t.path = norm_str(&t.path);
+        }
+        crate::callers::run(&index, &req, cancel)
+    }
 }

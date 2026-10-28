@@ -2,7 +2,7 @@
 //! the tables that are derived from the models.
 
 use crate::derived::Derived;
-use crate::textutil::{decode, fix_columns};
+use crate::textutil::{decode, fix_columns, word_hashes};
 use crate::walk::{self, Ignorer, MAX_FILE_BYTES};
 use kestrel_common::{Error, Result};
 use crate::cmodel::CModel;
@@ -20,6 +20,8 @@ pub struct FileEntry {
     /// Modification time in milliseconds since 1970 (0 when unknown).
     pub mtime_ms: u64,
     pub size: u64,
+    /// Sorted hashes of the words in the file text. Empty: unknown.
+    pub words: Box<[u32]>,
     /// Columns are UTF-16 units (the parser's byte columns are converted).
     pub model: CModel,
 }
@@ -62,7 +64,7 @@ impl Index {
     /// with unsaved changes). The tables are built again for the new index.
     pub fn with_model(&self, path: &Path, lang: Lang, model: CModel) -> Index {
         let mut files = self.files.clone();
-        let entry = Arc::new(FileEntry { path: path.to_path_buf(), lang, mtime_ms: 0, size: 0, model });
+        let entry = Arc::new(FileEntry { path: path.to_path_buf(), lang, mtime_ms: 0, size: 0, words: Box::new([]), model });
         match self.file_id(path) {
             Some(i) => files[i as usize] = entry,
             None => files.push(entry),
@@ -91,7 +93,8 @@ pub fn parse_file(path: &Path, lang: Lang) -> Option<FileEntry> {
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_millis() as u64);
-    Some(FileEntry { path: path.to_path_buf(), lang, mtime_ms, size: meta.len(), model: parse_text(lang, &text) })
+    let words = word_hashes(text.as_bytes());
+    Some(FileEntry { path: path.to_path_buf(), lang, mtime_ms, size: meta.len(), words, model: parse_text(lang, &text) })
 }
 
 pub fn build_index(root: &Path, cancel: &AtomicBool) -> Result<Index> {

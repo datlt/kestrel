@@ -8,6 +8,7 @@ use crate::model::*;
 pub(crate) fn parse(text: &str) -> FileModel {
     let mut p = P::new(text, true);
     p.members(None, None);
+    p.finish();
     p.m
 }
 
@@ -116,6 +117,25 @@ impl<'a> P<'a> {
             collect: false,
             body_owner: None,
             scratch: String::new(),
+        }
+    }
+
+    /// Makes the end lines consistent after parsing.
+    fn finish(&mut self) {
+        for t in self.m.types.iter_mut() {
+            for f in t.fields.iter_mut().chain(t.methods.iter_mut()) {
+                f.end_line = f.end_line.max(f.line);
+                t.end_line = t.end_line.max(f.end_line);
+            }
+        }
+        for f in self.m.top_level.iter_mut() {
+            f.end_line = f.end_line.max(f.line);
+        }
+        for i in (0..self.m.types.len()).rev() {
+            let (e, o) = (self.m.types[i].end_line, self.m.types[i].outer);
+            if let Some(o) = o.and_then(|o| self.m.types.get_mut(o)) {
+                o.end_line = o.end_line.max(e);
+            }
         }
     }
 
@@ -554,6 +574,12 @@ impl<'a> P<'a> {
                     td.end_line = l;
                 }
                 self.pos += 1;
+            } else {
+                // Unclosed body: the type ends where the file ends.
+                let l = self.s.last_line(self.n());
+                if let Some(td) = self.td(idx_o) {
+                    td.end_line = td.end_line.max(l);
+                }
             }
         }
     }
@@ -639,6 +665,7 @@ impl<'a> P<'a> {
                         receiver: None,
                         line,
                         column,
+                        end_line: line,
                     };
                     if let Some(td) = self.m.types.get_mut(idx) {
                         td.fields.push(f);
@@ -713,6 +740,7 @@ impl<'a> P<'a> {
                     receiver: None,
                     line,
                     column,
+                    end_line: self.s.last_line(self.pos),
                 };
                 if let Some(td) = self.td(idx_o) {
                     td.fields.push(m);
@@ -778,6 +806,7 @@ impl<'a> P<'a> {
                     receiver: None,
                     line,
                     column,
+                    end_line: self.s.last_line(self.pos),
                 };
                 self.push_member(owner, m, true);
             }
@@ -831,6 +860,7 @@ impl<'a> P<'a> {
                     receiver: None,
                     line,
                     column,
+                    end_line: self.s.last_line(self.pos),
                 };
                 self.push_member(owner, m, true);
             }
@@ -872,6 +902,7 @@ impl<'a> P<'a> {
                     receiver: None,
                     line,
                     column,
+                    end_line: if self.p(self.pos, b',') || self.p(self.pos, b';') { self.s.line(self.pos) } else { self.s.last_line(self.pos) },
                 };
                 self.push_member(owner, m, false);
             }

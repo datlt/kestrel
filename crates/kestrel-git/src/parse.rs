@@ -119,3 +119,22 @@ pub fn parse_name_status(buf: &[u8]) -> Vec<DiffEntry> {
     }
     out
 }
+
+/// Reads `%(upstream:track)`: `[ahead 2, behind 1]`, `[ahead 2]`, `[behind 1]`,
+/// `[gone]` or an empty text. Gives (ahead, behind, gone).
+pub fn parse_track(s: &str) -> (u32, u32, bool) {
+    let s = s.trim().trim_start_matches('[').trim_end_matches(']');
+    if s == "gone" {
+        return (0, 0, true);
+    }
+    let (mut ahead, mut behind) = (0, 0);
+    for part in s.split(',') {
+        let mut w = part.split_whitespace();
+        match (w.next(), w.next().and_then(|n| n.parse::<u32>().ok())) {
+            (Some("ahead"), Some(n)) => ahead = n,
+            (Some("behind"), Some(n)) => behind = n,
+            _ => {}
+        }
+    }
+    (ahead, behind, false)
+}

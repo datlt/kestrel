@@ -1,0 +1,8 @@
+package com.acme.shop.cart
+
+/** Old coupon codes. Replaced by DiscountRule. */
+object LegacyCoupon {
+    private val codes = mapOf("WELCOME5" to 5, "SPRING10" to 10)
+
+    fun percentFor(code: String): Int = codes[code.uppercase()] ?: 0
+}

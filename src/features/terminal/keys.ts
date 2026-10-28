@@ -4,6 +4,12 @@
 //        of the app, which runs the command with that key binding).
 // `search`: the terminal opens its own search bar.
 // `term`: xterm sends the key to the shell program.
+//
+// A key that belongs to an input method (a composition, or `keyCode` 229) is always
+// `term`: xterm and `ime.ts` handle it, and no app shortcut runs. While you compose
+// Japanese or Vietnamese text, `Ctrl-\`` or Cmd-w must not close or toggle anything.
+
+import { isImeKey } from './ime';
 
 export interface KeyLike {
   type: string;
@@ -12,6 +18,11 @@ export interface KeyLike {
   metaKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  /** True while an input method (IME) composes text. */
+  isComposing?: boolean;
+  /** 229 means the input method handles the key. */
+  keyCode?: number;
+  key?: string;
 }
 
 export type KeyRoute = 'app' | 'search' | 'term';
@@ -29,7 +40,7 @@ export type KeyRoute = 'app' | 'search' | 'term';
  * Cmd-p, Cmd-b ...). Ctrl keys always go to the shell program.
  */
 export function routeKey(e: KeyLike, mac: boolean): KeyRoute {
-  if (e.type !== 'keydown') return 'term';
+  if (e.type !== 'keydown' || isImeKey(e)) return 'term';
   const mod = mac ? e.metaKey : e.ctrlKey;
 
   if (e.code === 'Backquote' && e.ctrlKey && !e.altKey && !e.metaKey) return 'app';
@@ -58,7 +69,8 @@ const MODIFIER_CODES = new Set([
 
 /** True for a key that closes a pane whose shell has ended (any key but a lone modifier). */
 export function isClosingKey(e: KeyLike): boolean {
-  return e.type === 'keydown' && !MODIFIER_CODES.has(e.code);
+  // A key of the input method (keyCode 229) is not "any key": it must not close the pane.
+  return e.type === 'keydown' && !isImeKey(e) && !MODIFIER_CODES.has(e.code);
 }
 
 /**
@@ -68,7 +80,7 @@ export function isClosingKey(e: KeyLike): boolean {
  * and Ctrl-Shift-v.
  */
 export function clipboardAction(e: KeyLike, mac: boolean): 'copy' | 'paste' | null {
-  if (mac || e.type !== 'keydown') return null;
+  if (mac || e.type !== 'keydown' || isImeKey(e)) return null;
   if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return null;
   if (e.code === 'KeyC') return 'copy';
   if (e.code === 'KeyV') return 'paste';

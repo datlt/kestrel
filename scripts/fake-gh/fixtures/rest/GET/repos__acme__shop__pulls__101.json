@@ -1,0 +1,52 @@
+{
+  "number": 101,
+  "title": "Add discount rules to the cart",
+  "body": "Adds discount rules to the shopping cart.\n\n## What changes\n\n- New `DiscountRule` interface and the rule `PercentOverMinimum`.\n- `CartService.total()` adds up the discount of every rule.\n- The old `LegacyCoupon` object is removed.\n\n```kotlin\nval cart = CartService(prices, listOf(PercentOverMinimum(10, Money.of(50))))\n```\n\nSee the [design note](https://github.example.test/acme/shop/blob/main/docs/discounts.md) and the\n[ticket](https://tracker.example.test/SHOP-412).\n\n![scheme](https://github.example.test/acme/shop/assets/discount-scheme.png)\n![tracker](https://images.example.test/tracking-pixel.png)\n\nPing @bob-reviewer for the price rounding.\n",
+  "state": "open",
+  "draft": false,
+  "merged": false,
+  "mergeable_state": "blocked",
+  "user": {
+    "login": "mira-dev",
+    "type": "User"
+  },
+  "head": {
+    "ref": "feature/cart-discounts",
+    "sha": "7c1e5a90b3d24f68a1c0e9d57b2f4836ae01d9c4",
+    "repo": {
+      "full_name": "acme/shop"
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "4b8d2f61c07a95e3d1f6a8b04c52e7193fd6a0b8",
+    "repo": {
+      "full_name": "acme/shop"
+    }
+  },
+  "html_url": "https://github.example.test/acme/shop/pull/101",
+  "labels": [
+    {
+      "name": "cart",
+      "color": "1d76db"
+    },
+    {
+      "name": "needs review",
+      "color": "fbca04"
+    }
+  ],
+  "requested_reviewers": [
+    {
+      "login": "octo-fake",
+      "type": "User"
+    }
+  ],
+  "requested_teams": [
+    {
+      "slug": "shop-owners",
+      "name": "Shop owners"
+    }
+  ],
+  "created_at": "2026-10-24T08:15:00Z",
+  "updated_at": "2026-10-27T16:20:00Z"
+}

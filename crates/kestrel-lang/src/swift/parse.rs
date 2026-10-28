@@ -211,6 +211,19 @@ impl<'a> Parser<'a> {
         self.t.get(i).map_or(0, |t| t.col)
     }
 
+    /// Line where the last consumed token ends (a string can span lines).
+    fn prev_end_line(&self) -> u32 {
+        let Some(t) = self.i.checked_sub(1).and_then(|k| self.t.get(k)) else {
+            return self.t.first().map_or(1, |t| t.line);
+        };
+        let mut line = t.line;
+        if t.kind == STR || t.kind == REGEX {
+            let s = self.src.as_bytes().get(t.start as usize..t.end as usize).unwrap_or(b"");
+            line += s.iter().filter(|&&c| c == b'\n').count() as u32;
+        }
+        line
+    }
+
     fn last_line(&self) -> u32 {
         self.t.last().map_or(1, |t| t.line)
     }
@@ -1249,6 +1262,7 @@ impl<'a> Parser<'a> {
                 receiver: None,
                 line,
                 column: col,
+                end_line: self.prev_end_line(),
             },
         );
     }
@@ -1286,6 +1300,7 @@ impl<'a> Parser<'a> {
                 receiver: None,
                 line,
                 column: col,
+                end_line: self.prev_end_line(),
             },
         );
     }
@@ -1320,6 +1335,7 @@ impl<'a> Parser<'a> {
                 receiver: None,
                 line,
                 column: col,
+                end_line: self.prev_end_line(),
             },
         );
     }
@@ -1472,6 +1488,7 @@ impl<'a> Parser<'a> {
                     receiver: None,
                     line,
                     column: col,
+                    end_line: self.prev_end_line(),
                 });
             }
             if self.punct(self.i, b',') {
@@ -1564,6 +1581,7 @@ impl<'a> Parser<'a> {
                     receiver: None,
                     line,
                     column: col,
+                    end_line: self.prev_end_line(),
                 },
             );
             if self.punct(self.i, b',') {

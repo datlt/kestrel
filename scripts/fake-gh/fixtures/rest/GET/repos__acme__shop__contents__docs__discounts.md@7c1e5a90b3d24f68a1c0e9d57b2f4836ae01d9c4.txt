@@ -1,0 +1,6 @@
+# Discounts
+
+A cart can have several `DiscountRule` objects. The cart adds up the
+discount of each rule and takes the sum off the subtotal.
+
+Coupon codes (`LegacyCoupon`) were removed.

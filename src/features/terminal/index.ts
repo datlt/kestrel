@@ -4,6 +4,7 @@
 import type { AppContext } from '../../core/types';
 import './terminal.css';
 import { createTerminalView, TerminalPanel, VIEW_ID } from './panel';
+import { parseRunArgs } from './run';
 
 /** Registers the Terminal panel with tabs and split panes. */
 export function initTerminal(ctx: AppContext): void {
@@ -57,6 +58,23 @@ export function initTerminal(ctx: AppContext): void {
         keybinding: ['Ctrl-Shift-`', 'Ctrl-Shift-~'],
         run: () => {
           open()?.newTab();
+        },
+      },
+      {
+        // Hidden command for other features and scripts:
+        //   ctx.commands.execute('terminal.run', { command: 'npm test', title: 'Tests', cwd })
+        // It opens a new terminal tab, shows the panel and runs the command.
+        id: 'terminal.run',
+        title: 'Run in New Terminal',
+        category,
+        hidden: true,
+        run: (arg?: unknown) => {
+          const parsed = parseRunArgs(arg);
+          if (!parsed.ok) {
+            ctx.ui.notify(parsed.error, { kind: 'error' });
+            return;
+          }
+          open()?.newTab(parsed.value);
         },
       },
       {

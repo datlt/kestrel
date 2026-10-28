@@ -1,0 +1,26 @@
+{
+  "hosts": {
+    "github.example.test": [
+      {
+        "state": "success",
+        "active": true,
+        "host": "github.example.test",
+        "login": "octo-fake",
+        "tokenSource": "keyring",
+        "scopes": "gist, read:org, repo, workflow",
+        "gitProtocol": "https"
+      }
+    ],
+    "ghe.example.test": [
+      {
+        "state": "success",
+        "active": true,
+        "host": "ghe.example.test",
+        "login": "enterprise-fake",
+        "tokenSource": "keyring",
+        "scopes": "read:org, repo",
+        "gitProtocol": "https"
+      }
+    ]
+  }
+}

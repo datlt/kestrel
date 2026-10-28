@@ -20,6 +20,19 @@ fn options() -> Options<'static> {
     o
 }
 
+/// Renders markdown from other people (pull request comments) for the main
+/// window. Raw HTML is not rendered and comrak drops `javascript:` and other
+/// unsafe links, because this HTML goes into the page that can call Kestrel
+/// commands.
+pub fn render_safe(text: &str) -> String {
+    let mut o = options();
+    o.render.r#unsafe = false;
+    o.render.sourcepos = false;
+    o.extension.front_matter_delimiter = None;
+    o.extension.header_id_prefix = None;
+    markdown_to_html(text, &o)
+}
+
 /// Renders markdown to HTML. Block elements carry `data-sourcepos="l:c-l:c"`.
 /// A front matter block at the top is shown as a small table.
 pub fn render(text: &str) -> String {
@@ -79,6 +92,15 @@ fn esc(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn safe_render_drops_raw_html_and_script_links() {
+        let html = super::render_safe("hi <script>alert(1)</script> <img src=x onerror=alert(1)>\n\n[x](javascript:alert(1)) **b**");
+        assert!(!html.contains("<script"), "{html}");
+        assert!(!html.contains("onerror"), "{html}");
+        assert!(!html.contains("javascript:"), "{html}");
+        assert!(html.contains("<strong>b</strong>"), "{html}");
+    }
     use super::*;
 
     #[test]

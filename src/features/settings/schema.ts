@@ -433,6 +433,14 @@ export const SETTING_DEFS: readonly SettingDef[] = [
     section: 'terminal',
     type: 'boolean',
   },
+  {
+    key: 'terminal.highlightCommands',
+    title: 'Command Line Colors',
+    description:
+      'Color the command line while you type in zsh: commands, options, strings and variables. Kestrel loads your own zsh files first. New terminals use the change.',
+    section: 'terminal',
+    type: 'boolean',
+  },
 
   // Web
   {

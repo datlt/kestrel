@@ -2411,6 +2411,7 @@ dependencies = [
  "kestrel-common",
  "kestrel-db",
  "kestrel-fs",
+ "kestrel-gh",
  "kestrel-git",
  "kestrel-lsp",
  "kestrel-markdown",
@@ -2492,6 +2493,18 @@ dependencies = [
  "serde_json",
  "tempfile",
  "trash",
+]
+
+[[package]]
+name = "kestrel-gh"
+version = "0.1.0"
+dependencies = [
+ "kestrel-common",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

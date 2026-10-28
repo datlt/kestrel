@@ -83,6 +83,8 @@ pub struct CMember {
     pub receiver: Option<Box<CRef>>,
     pub line: u32,
     pub column: u32,
+    /// 0 when the parser does not know.
+    pub end_line: u32,
 }
 
 impl CMember {
@@ -99,6 +101,7 @@ impl CMember {
             receiver: m.receiver.as_ref().map(|r| Box::new(CRef::from(r))),
             line: m.line,
             column: m.column,
+            end_line: m.end_line,
         }
     }
 }

@@ -268,16 +268,20 @@ Use these ids and keys. `Mod` = Cmd on macOS, Ctrl elsewhere. Keys marked
 | `usages.next` / `usages.prev` | F4 / Shift-F4 | usages |
 | `diagram.showForCursor` | Mod-Alt-u | diagram |
 | `diagram.showForFile` / `diagram.showForFolder` | (palette, explorer menu) | diagram |
+| `callHierarchy.show` | Mod-Shift-h | usages |
+| `git.switchBranch` | Mod-Shift-b, click on `git.branch` | git |
+| `github.showPullRequests` / `github.refresh` / `github.openPullRequest` | (palette) | github-ui |
+| `terminal.run` | (hidden, `{ command, title?, cwd? }`) | terminal |
 
 View ids: sidebar `explorer` (order 10), `search` (20), `git` (30);
-panel `problems` (10), `usages` (15), `lsp-output` (20).
+panel `problems` (10), `usages` (15), `call-hierarchy` (16), `lsp-output` (20); sidebar `github` (40).
 
 Status bar ids: left `git.branch` (100), `lsp.status` (50);
 right `editor.cursor` (100), `editor.indent` (90), `editor.encoding` (80),
 `editor.eol` (70), `editor.language` (60), `preview.info` (40).
 
 Tab kinds and ids: `file` (`file:<path>`), `diff` (`diff:<base>:<path>`),
-`image` (`image:<path>`), `diagram` (`diagram:<n>`).
+`image` (`image:<path>`), `diagram` (`diagram:<n>`), `pr` (`pr:<host>/<owner>/<repo>#<n>`).
 
 ## 7. Feature specs
 
@@ -905,3 +909,144 @@ Language notes:
   `compile_commands.json`, `.sourcekit-lsp`. Without a build server an Xcode
   project gets only single-file features, so find usages and the class
   diagram use the Kestrel index for Swift too.
+
+## 12. Round 6: call hierarchy, GitHub pull requests, branches, terminal input
+
+### 12.1 Ownership
+
+| Area | Owner | Files |
+|------|-------|-------|
+| `Member::end_line` in the parsers | lang-jvm, lang-swift | as in 11.1 |
+| Callers backend | code-index | as in 11.1 (`code_callers`) |
+| Call hierarchy UI | usages | `src/features/usages/**` (a new `call-hierarchy*` module set is fine), `src/editor/context-menu.ts`, the LSP call hierarchy helpers in `src/features/lsp/{index.ts,actions.ts}` |
+| GitHub backend | gh-backend | `crates/kestrel-gh/**`, `src-tauri/src/cmd/gh.rs`, the `gh_*` section of `scripts/dev-bridge.mjs` |
+| GitHub UI | github-ui | `src/features/github/**` except `review-diff/` |
+| Review diff | review-diff | `src/features/github/review-diff/**` except `types.ts` |
+| Branch switcher | git | `src/features/git/**`, `src/ipc/git.ts`, `src-tauri/src/cmd/git.rs`, `crates/kestrel-git/**`, the `git_*` commands in `scripts/dev-bridge.mjs` |
+| Terminal | terminal | as in 10.1, plus `terminal.run` |
+| Contracts and wiring | integrator | `src/ipc/code.ts`, `src/ipc/gh.ts`, `src/features/github/review-diff/types.ts`, `model.rs`, error codes, `cmd/mod.rs`, `workbench.ts`, `md_render_safe` |
+
+### 12.2 Call hierarchy
+
+- Command `callHierarchy.show` "Show Call Hierarchy" (Mod-Shift-h, editor
+  context menu). Bottom panel view `call-hierarchy` (order 16). The root is
+  the method at the cursor; each node lists its callers one level at a time
+  (`codeCallers`), loaded when the user opens the node. The tree can go up
+  as many levels as the user opens. A caller that is already on the path to
+  the root is marked "recursive" and does not open again.
+- Each caller row: the caller (`Type.method(params)`), the package or folder
+  in grey, the number of calls. Its children: the call sites (line and text),
+  then its own callers. Toggles: hide test code (`CallerNode.test`), hide
+  "same name" callers (`likely: false`). Expand All opens every node to a
+  depth of 3 with a limit of 500 nodes.
+- With a ready language server (not Swift), the root and the first levels use
+  `textDocument/prepareCallHierarchy` and `callHierarchy/incomingCalls`
+  through a hidden command `lsp.incomingCalls`, like `lsp.referencesAt`.
+  Without one, or on error or after 10 seconds, it uses `codeCallers`.
+- Backend: callers = the usages of the target (calls, references to method
+  references, `instantiation` for constructors) mapped to the member whose
+  `line..=end_line` holds the call. Code outside members is an
+  `initializer` of its type (or of the file for top-level code).
+  `Member::end_line` comes from the parsers; when it is 0, the next member's
+  line is the limit.
+
+### 12.3 GitHub backend (`kestrel-gh`, `cmd/gh.rs`)
+
+- Every call runs the `gh` program (`kestrel_common::process::command`) with
+  `GH_PROMPT_DISABLED=1`, `NO_COLOR=1`, `GH_NO_UPDATE_NOTIFIER=1`, and a
+  timeout (30 s; 120 s for `paginate` and checkout). Kestrel never reads,
+  stores, logs or returns a token. Never pass `--show-token`, and drop any
+  `token` field from JSON before it goes to the frontend.
+- `gh_api`: `gh api --hostname <host> -X <method> <path>` with
+  `--input -` for the body, `--paginate` (and `--slurp` to get one array)
+  when asked, `-i` to read the HTTP status. The host must be one of the
+  logged-in hosts. The path must be relative (no `://`, no leading `/`, only
+  URL path and query characters). 401 gives `gh_auth`, 404 `not_found`,
+  other errors `gh_error` with the status and GitHub's `message`.
+- `gh_graphql`: `gh api graphql` with the query and variables as a JSON body.
+- `gh_file_text`: the contents API with `Accept: application/vnd.github.raw`;
+  bytes that are not UTF-8 give `binary`. Files over 5 MB give `too_large`.
+- `gh_status`, `gh_switch`, `gh_logout`, `gh_repo_of` (parse every remote,
+  `https://host/o/r(.git)`, `git@host:o/r(.git)`, `ssh://git@host/o/r`),
+  `gh_pr_checkout` (in the folder, `gh pr checkout <n>`), `gh_cancel`
+  (running calls keyed by window label and id; kill the process).
+- Dev bridge: the `gh_*` commands run `gh` from Node in the same way.
+
+### 12.4 GitHub UI (`src/features/github/**`)
+
+- Sidebar view `github` (order 40, lucide `GitPullRequest`, title "Pull
+  Requests"). Top: the accounts (host and login, active mark) with Switch,
+  Log Out (asks first) and "Add Account" (runs `ghLoginCommand(host)` with
+  `terminal.run`; the user types the host). Sections, each with a count and a
+  refresh button: "Review Requested" (`is:pr is:open review-requested:@me`),
+  "My Pull Requests" (`is:pr is:open author:@me`), "This Repository" (open
+  pull requests of `ghRepoOf(root)`). One GraphQL search per section per
+  host of the accounts; refresh on show and every 5 minutes while the view is
+  visible (pause when hidden). Rows: title, `owner/repo#n`, author, time,
+  review state (approved, changes requested, review required), draft mark,
+  checks (passed, failed, running).
+- Pull request tab: kind `pr`, id `pr:<host>/<owner>/<repo>#<n>`, restored.
+  Header: title, state, `head -> base`, author, reviewers and their state,
+  labels, checks, buttons Open in Browser, Check Out (only when the open folder
+  is this repository: `ghPrCheckout`, then the git view refreshes), Refresh.
+  Parts: Overview (description with `mdRenderSafe`, then the timeline of
+  comments and reviews, and a box to add a comment), Files (list with
+  status and +/- counts and the comment count, a filter, "viewed" marks kept
+  per head commit in `globalState`; a click shows the review diff for that
+  file, with Next File and Previous File), and the review bar (always
+  visible): the number of draft comments, Finish Review (Comment, Approve,
+  Request Changes, with a text box). Drafts stay in `globalState` until they
+  are submitted or deleted, so a restart does not lose them.
+- Diff contents: base = the merge base of the pull request (compare API),
+  head = `head.sha`, files from `pulls/<n>/files` (paginate), texts with
+  `ghFileText`. Review threads from GraphQL `reviewThreads` (line,
+  startLine, diffSide, isOutdated, isResolved, comments). New comments:
+  `now` posts a review comment (REST `pulls/<n>/comments` with `commit_id`,
+  `path`, `line`, `side`, `start_line`); `review` keeps a draft; Finish
+  Review sends `pulls/<n>/reviews` with `event` and all drafts as
+  `comments`. Replies: `pulls/<n>/comments/<id>/replies`. Resolve: GraphQL
+  `resolveReviewThread` / `unresolveReviewThread`.
+- Every action that writes to GitHub (comment, reply, review, approve,
+  resolve) runs only from a click of the user, shows a spinner, and shows
+  the GitHub error text on failure. Approve and Request Changes ask for
+  confirmation in the dialog of the review bar.
+- Comments from other people are untrusted: only `mdRenderSafe` HTML goes
+  into the page, links open in the system browser, images load only from
+  `https:` URLs of the same host.
+
+### 12.5 Branch switcher
+
+- Command `git.switchBranch` "Switch Branch..." (Mod-Shift-b and a click
+  on the status bar item `git.branch`). Quick pick: "Create New Branch...",
+  "Create New Branch From...", then local branches (recent first, the current
+  one marked, ahead/behind counts), then remote branches that have no local
+  branch. Accept: `git switch <branch>` (a remote branch: `git switch
+  --track <remote>/<name>`). Fetch button or item: `git fetch --prune`.
+- Local changes that block the switch: a dialog with "Stash and Switch"
+  (`git stash push -u -m "Kestrel: before switching to <branch>"`, switch,
+  then offer "Apply Stash" in a notification), "Cancel". Never discard
+  changes. Untracked files that would be overwritten: show the git message.
+- After a switch: refresh git status and decorations, reload open files that
+  changed on disk (the files feature does this through `fs:changed`), and
+  keep editors with unsaved changes as they are (warn first when any editor
+  is dirty).
+
+### 12.6 Terminal: colors and input
+
+- Colors: a real ANSI palette for dark and light themes with distinct
+  bright colors (not the UI colors), `minimumContrastRatio` 4.5, and
+  `CLICOLOR=1` in the shell environment so BSD `ls` shows colors.
+- Command line colors (setting `terminal.highlightCommands`, default true,
+  zsh only): Kestrel starts zsh with its own `ZDOTDIR` folder whose files load
+  the user's own files first (`$HOME/.zshenv`, `.zprofile`, `.zshrc`,
+  `.zlogin`, or the user's own `ZDOTDIR`), then add a small `zle` highlighter:
+  command names (green when found, red when not), options, strings,
+  variables, comments. It does nothing when the user already loads
+  `zsh-syntax-highlighting` or `fast-syntax-highlighting`.
+- Input: Japanese (Kotoeri) and Vietnamese (Simple Telex) input methods of
+  macOS work in the terminal: composition text shows at the cursor, the
+  candidate window opens at the cursor, Enter that confirms a conversion does
+  not run the command, no doubled or lost characters, and Backspace during a
+  composition edits the composition only. UTF-8 output is decoded as a stream.
+- Hidden command `terminal.run` (`{ command, title?, cwd? }`): opens a new
+  terminal tab and runs the command in it.

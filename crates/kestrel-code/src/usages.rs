@@ -48,20 +48,20 @@ fn member_kind_str(k: MemberKind) -> &'static str {
 
 /// What the name at the cursor is, with what the search needs.
 #[derive(Default)]
-struct Subject {
-    sym: Option<UsageSymbol>,
-    ty: Option<TypeId>,
+pub(crate) struct Subject {
+    pub(crate) sym: Option<UsageSymbol>,
+    pub(crate) ty: Option<TypeId>,
     /// Types that declare (or are the receiver of) the member.
-    owners: Vec<TypeId>,
+    pub(crate) owners: Vec<TypeId>,
     /// Top-level declarations: (file, index in `top_level`).
-    top: Vec<(u32, u32)>,
-    kind: Option<SymbolKind>,
+    pub(crate) top: Vec<(u32, u32)>,
+    pub(crate) kind: Option<SymbolKind>,
 }
 
-struct Found<'a> {
-    owner: TypeId,
-    file: u32,
-    m: &'a Member,
+pub(crate) struct Found<'a> {
+    pub(crate) owner: TypeId,
+    pub(crate) file: u32,
+    pub(crate) m: &'a Member,
 }
 
 fn find_member<'a>(v: &View<'a>, ty: TypeId, name: &str) -> Option<Found<'a>> {
@@ -80,7 +80,7 @@ fn decl_of(v: &View, file: u32, m: &Member) -> Declaration {
     Declaration { path: v.files[file as usize].path.to_string_lossy().into_owned(), line: m.line, column: m.column }
 }
 
-fn type_subject(v: &View, t: TypeId, name: &str) -> Subject {
+pub(crate) fn type_subject(v: &View, t: TypeId, name: &str) -> Subject {
     let d = v.decl(t);
     let fe = v.file_of(t);
     Subject {
@@ -98,7 +98,7 @@ fn type_subject(v: &View, t: TypeId, name: &str) -> Subject {
     }
 }
 
-fn member_subject(v: &View, owners: Vec<TypeId>, found: Option<Found>, name: &str, lang: Lang) -> Subject {
+pub(crate) fn member_subject(v: &View, owners: Vec<TypeId>, found: Option<Found>, name: &str, lang: Lang) -> Subject {
     let owner = found.as_ref().map(|f| f.owner).or(owners.first().copied());
     Subject {
         sym: Some(UsageSymbol {
@@ -115,7 +115,7 @@ fn member_subject(v: &View, owners: Vec<TypeId>, found: Option<Found>, name: &st
     }
 }
 
-fn top_subject(v: &View, top: Vec<(u32, u32)>, name: &str, lang: Lang) -> Subject {
+pub(crate) fn top_subject(v: &View, top: Vec<(u32, u32)>, name: &str, lang: Lang) -> Subject {
     let (f, i) = top[0];
     let m = &v.files[f as usize].model.top_level[i as usize];
     Subject {
@@ -385,10 +385,10 @@ impl<'a> Cursor<'a> {
 
 // --- The search -----------------------------------------------------------------
 
-struct FileHits {
-    file: u32,
-    likely: bool,
-    hits: Vec<(usize, usize, UsageKind)>,
+pub(crate) struct FileHits {
+    pub(crate) file: u32,
+    pub(crate) likely: bool,
+    pub(crate) hits: Vec<(usize, usize, UsageKind)>,
 }
 
 fn type_names(t: &CRef, out: &mut Vec<String>) {
@@ -444,10 +444,28 @@ struct Search<'a> {
     member_decls: HashSet<(u32, u32)>,
     aliases: HashMap<u32, Vec<String>>,
     finder: memmem::Finder<'a>,
+    /// Callers only: keep calls (and method references). `Some(true)`: a
+    /// property, so reads count too.
+    keep: Option<bool>,
 }
 
 impl Search<'_> {
     fn file(&self, fid: u32, text: &str) -> Option<FileHits> {
+        let mut fh = self.file_raw(fid, text)?;
+        if let Some(property) = self.keep {
+            fh.hits.retain(|&(start, _, kind)| match kind {
+                UsageKind::Call | UsageKind::Instantiation => true,
+                UsageKind::Reference => property || text[..start].trim_end().ends_with("::"),
+                _ => false,
+            });
+            if fh.hits.is_empty() {
+                return None;
+            }
+        }
+        Some(fh)
+    }
+
+    fn file_raw(&self, fid: u32, text: &str) -> Option<FileHits> {
         let fe = &self.v.files[fid as usize];
         let alias = self.aliases.get(&fid);
         let has_name = self.finder.find(text.as_bytes()).is_some();
@@ -573,7 +591,7 @@ impl Search<'_> {
     }
 }
 
-fn read_text(path: &Path) -> Option<String> {
+pub(crate) fn read_text(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > MAX_FILE_BYTES {
         return None;
@@ -581,7 +599,7 @@ fn read_text(path: &Path) -> Option<String> {
     Some(decode(std::fs::read(path).ok()?))
 }
 
-fn matches_of(text: &str, hits: &[(usize, usize, UsageKind)]) -> Vec<UsageMatch> {
+pub(crate) fn matches_of(text: &str, hits: &[(usize, usize, UsageKind)]) -> Vec<UsageMatch> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(hits.len());
     let mut line = 1u32;
@@ -600,61 +618,85 @@ fn check(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Relaxed) { Err(Error::cancelled()) } else { Ok(()) }
 }
 
-pub fn run(index: &Arc<Index>, req: &UsagesRequest, cancel: &AtomicBool) -> Result<UsagesResult> {
-    let t0 = Instant::now();
-    let path = PathBuf::from(&req.path);
-    let text = match &req.text {
-        Some(t) => t.clone(),
-        None => read_text(&path).ok_or_else(|| Error::not_found(format!("cannot read {}", req.path)))?,
-    };
-    let empty = |symbol: Option<UsageSymbol>| UsagesResult {
-        symbol,
-        files: vec![],
-        total: 0,
-        truncated: false,
-        exact: false,
-        file_only: false,
-        elapsed_ms: t0.elapsed().as_millis() as u64,
-    };
-    let Some(line) = line_text(&text, req.line) else { return Ok(empty(None)) };
-    let Some((s, e)) = ident_range(line, req.column) else { return Ok(empty(None)) };
+pub(crate) struct Collected {
+    pub(crate) files: Vec<FileHits>,
+    pub(crate) truncated: bool,
+}
+
+pub(crate) struct Classified {
+    pub(crate) index: Arc<Index>,
+    pub(crate) fid: u32,
+    pub(crate) lang: Lang,
+    pub(crate) name: String,
+    pub(crate) subj: Subject,
+    pub(crate) hit_kind: UsageKind,
+}
+
+/// Finds the name at a position (it must be a code hit, not a comment or
+/// string) and decides what it is. `None` when there is no name.
+pub(crate) fn classify_at(
+    index: &Arc<Index>,
+    path: &Path,
+    text: &str,
+    has_text: bool,
+    line_no: u32,
+    column: u32,
+    cancel: &AtomicBool,
+) -> Result<Option<Classified>> {
+    let Some(lang) = lang_of(path) else { return Ok(None) };
+    let Some(line) = line_text(text, line_no) else { return Ok(None) };
+    let Some((s, e)) = ident_range(line, column) else { return Ok(None) };
     let name = line[s..e].to_owned();
-    let max = req.max_results.max(1);
-    let Some(lang) = lang_of(&path) else {
-        return other_language(index, req, &path, &name, max, cancel, t0);
-    };
-    let starts = line_starts(&text);
-    let abs = starts[req.line as usize - 1] + s;
-    let hits = find_identifiers(lang, &text, &name);
-    let Some(hit) = hits.iter().find(|h| h.start <= abs && abs < h.end) else { return Ok(empty(None)) };
+    let starts = line_starts(text);
+    let abs = starts[line_no as usize - 1] + s;
+    let hits = find_identifiers(lang, text, &name);
+    let Some(hit) = hits.iter().find(|h| h.start <= abs && abs < h.end) else { return Ok(None) };
     // The index with the editor text for this file.
-    let index = if req.text.is_some() || index.file_id(&path).is_none() {
-        if req.text.is_some() {
-            overlay(index, &path, &text)
-        } else {
-            Arc::new(index.with_model(&path, lang, parse_text(lang, &text)))
-        }
+    let index = if has_text {
+        overlay(index, path, text)
+    } else if index.file_id(path).is_none() {
+        Arc::new(index.with_model(path, lang, parse_text(lang, text)))
     } else {
         index.clone()
     };
     check(cancel)?;
     let v = index.view();
-    let fid = index.file_id(&path).ok_or_else(|| Error::internal("file is not in the index"))?;
+    let fid = index.file_id(path).ok_or_else(|| Error::internal("file is not in the index"))?;
     let cur = Cursor {
         v: &v,
         fid,
         lang,
         name: &name,
-        line: req.line,
-        ctx: innermost_type(&index.file(fid).model, req.line),
+        line: line_no,
+        ctx: innermost_type(&index.file(fid).model, line_no),
         hit,
         hits: &hits,
         starts: &starts,
     };
     let subj = cur.classify();
-    let kind = subj.kind.unwrap_or(SymbolKind::Unknown);
-    let file_only = kind == SymbolKind::Local && !req.wide;
+    drop(v);
+    let hit_kind = hit.kind;
+    Ok(Some(Classified { index, fid, lang, name, subj, hit_kind }))
+}
 
+/// Searches the files for a subject. The result is sorted by path, likely
+/// files first when the budget is short.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn collect(
+    index: &Arc<Index>,
+    subj: &Subject,
+    name: &str,
+    lang: Lang,
+    fid: u32,
+    path: &Path,
+    text: &str,
+    file_only: bool,
+    max: usize,
+    keep: Option<bool>,
+    cancel: &AtomicBool,
+) -> Result<Collected> {
+    let v = index.view();
+    let kind = subj.kind.unwrap_or(SymbolKind::Unknown);
     // Related types and declarations (members).
     let mut related: HashSet<TypeId> = HashSet::new();
     let mut member_decls: HashSet<(u32, u32)> = HashSet::new();
@@ -696,14 +738,22 @@ pub fn run(index: &Arc<Index>, req: &UsagesRequest, cancel: &AtomicBool) -> Resu
             }
         }
     }
-    let search = Search { v: &v, subj: &subj, name: &name, related, simple, member_decls, aliases, finder: memmem::Finder::new(name.as_bytes()) };
+    let search = Search { v: &v, subj, name, related, simple, member_decls, aliases, finder: memmem::Finder::new(name.as_bytes()), keep };
     let jvm = lang.is_jvm();
     let candidates: Vec<u32> = if file_only {
         vec![fid]
     } else {
-        (0..index.files.len() as u32).filter(|&f| index.file(f).lang.is_jvm() == jvm).collect()
+        (0..index.files.len() as u32)
+            .filter(|&f| {
+                let fe = index.file(f);
+                fe.lang.is_jvm() == jvm
+                    && (fe.path == path
+                        || crate::textutil::may_hold(&fe.words, name)
+                        || search.aliases.get(&f).is_some_and(|a| a.iter().any(|n| crate::textutil::may_hold(&fe.words, n))))
+            })
+            .collect()
     };
-    let current = path.as_path();
+    let current = path;
     let mut results: Vec<FileHits> = Vec::new();
     let mut likely_total = 0usize;
     let mut truncated = false;
@@ -717,7 +767,7 @@ pub fn run(index: &Arc<Index>, req: &UsagesRequest, cancel: &AtomicBool) -> Resu
                 }
                 let fe = index.file(f);
                 if fe.path == current {
-                    return search.file(f, &text);
+                    return search.file(f, text);
                 }
                 let t = read_text(&fe.path)?;
                 search.file(f, &t)
@@ -754,6 +804,39 @@ pub fn run(index: &Arc<Index>, req: &UsagesRequest, cancel: &AtomicBool) -> Resu
         }
     }
     chosen.sort_by(|a, b| index.file(a.file).path.cmp(&index.file(b.file).path));
+    Ok(Collected { files: chosen, truncated })
+}
+
+pub fn run(index: &Arc<Index>, req: &UsagesRequest, cancel: &AtomicBool) -> Result<UsagesResult> {
+    let t0 = Instant::now();
+    let path = PathBuf::from(&req.path);
+    let text = match &req.text {
+        Some(t) => t.clone(),
+        None => read_text(&path).ok_or_else(|| Error::not_found(format!("cannot read {}", req.path)))?,
+    };
+    let empty = |symbol: Option<UsageSymbol>| UsagesResult {
+        symbol,
+        files: vec![],
+        total: 0,
+        truncated: false,
+        exact: false,
+        file_only: false,
+        elapsed_ms: t0.elapsed().as_millis() as u64,
+    };
+    let Some(line) = line_text(&text, req.line) else { return Ok(empty(None)) };
+    let Some((s, e)) = ident_range(line, req.column) else { return Ok(empty(None)) };
+    let name = line[s..e].to_owned();
+    let max = req.max_results.max(1);
+    let Some(lang) = lang_of(&path) else {
+        return other_language(index, req, &path, &name, max, cancel, t0);
+    };
+    let Some(c) = classify_at(index, &path, &text, req.text.is_some(), req.line, req.column, cancel)? else { return Ok(empty(None)) };
+    let (index, fid, subj) = (c.index, c.fid, c.subj);
+    let kind = subj.kind.unwrap_or(SymbolKind::Unknown);
+    let file_only = kind == SymbolKind::Local && !req.wide;
+    let col = collect(&index, &subj, &name, lang, fid, &path, &text, file_only, max, None, cancel)?;
+    let (chosen, truncated) = (col.files, col.truncated);
+    let current = path.as_path();
     let mut files = Vec::with_capacity(chosen.len());
     let mut total = 0;
     for fh in chosen {

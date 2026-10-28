@@ -295,3 +295,72 @@ export interface UsagesResult {
 export function codeUsages(id: number, request: UsagesRequest): Promise<UsagesResult> {
   return invoke<UsagesResult>('code_usages', { id, request });
 }
+
+// --- Call hierarchy ----------------------------------------------------------
+
+/** A method, constructor, function or property that calls, or is called. */
+export interface CallTarget {
+  /** Qualified name of the type that declares it. Empty for Kotlin top-level and Swift global functions. */
+  owner: string;
+  name: string;
+  /**
+   * `initializer`: code that is not in a method: a field or property
+   * initializer, a Kotlin `init` block, a Java static block, top-level code of
+   * a `.kts` file.
+   */
+  kind: 'method' | 'constructor' | 'function' | 'property' | 'initializer';
+  /** Parameters as one text (`id: Long, name: String`), to tell overloads apart. Empty when none. */
+  params: string;
+  /** Position of the name. */
+  path: string;
+  line: number;
+  column: number;
+  lang: CodeLang;
+}
+
+export interface CallSite {
+  line: number;
+  column: number;
+  /** The line without leading white space, cut like the usages. */
+  text: string;
+  /** `[start, end)` of the called name in `text`, UTF-16 units. */
+  range: [number, number];
+}
+
+export interface CallerNode {
+  /** The method (or other code) that calls. Expand it with `codeCallers({ target })`. */
+  caller: CallTarget;
+  /** Where it calls, in the order of the file. */
+  sites: CallSite[];
+  /** False: only the name matched (another type can have a method with this name). */
+  likely: boolean;
+  /** The file is test code (a `test`, `tests`, `testByKotest`, `androidTest` ... folder, or `*Test`, `*Tests`, `*Spec` files). */
+  test: boolean;
+}
+
+export interface CallersRequest {
+  root: string;
+  /** The start: the method at a position (on its declaration or on a call), or a target from an earlier answer. */
+  at?: { path: string; line: number; column: number; text?: string };
+  target?: CallTarget;
+  maxResults: number;
+}
+
+export interface CallersResult {
+  /** The method that the callers call. null: no method, constructor, function or property at the position. */
+  target: CallTarget | null;
+  /** Sorted by path, then line. */
+  callers: CallerNode[];
+  /** Same meaning as `UsagesResult.exact`. */
+  exact: boolean;
+  truncated: boolean;
+  elapsedMs: number;
+}
+
+/**
+ * Callers of a method, one level. The UI asks again for each caller that the
+ * user opens, so the tree can go up as far as needed.
+ */
+export function codeCallers(id: number, request: CallersRequest): Promise<CallersResult> {
+  return invoke<CallersResult>('code_callers', { id, request });
+}

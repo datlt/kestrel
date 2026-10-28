@@ -733,3 +733,57 @@ extension Vc: P { var x: some View { Text("a") } }
     let full = p(sample);
     assert_eq!(full.types.len(), 3);
 }
+
+// ---------- Member::end_line ----------
+
+fn ends(text: &str, ty_name: &str) -> Vec<(String, u32, u32)> {
+    let m = p(text);
+    let t = ty(&m, ty_name);
+    let mut v: Vec<_> = t.fields.iter().chain(&t.methods).map(|x| (x.name.clone(), x.line, x.end_line)).collect();
+    v.sort_by_key(|x| x.1);
+    v
+}
+
+#[test]
+fn member_end_lines() {
+    let src = "class A {\n    var a = 1\n    var b: Int\n    @Published\n    var c: Int {\n        get {\n            1\n        }\n        set { }\n    }\n    let d: Foo = {\n        let f = Foo()\n        return f\n    }()\n    func f(\n        x: Int\n    ) -> Int {\n        let s = \"\"\"\n        a\n        \"\"\"\n        #if DEBUG\n        print(1)\n        #endif\n        class Local {\n        }\n        return 1\n    }\n    init() {\n    }\n    subscript(i: Int) -> Int {\n        0\n    }\n    var o: Int = 0 {\n        didSet {\n        }\n    }\n    let arr = [\n        1,\n        2,\n    ]\n    struct N {\n        func g() {\n        }\n    }\n    func h()\n}\n";
+    let e: std::collections::HashMap<_, _> = ends(src, "A").into_iter().map(|(n, l, e)| (n, (l, e))).collect();
+    assert_eq!(e["a"], (2, 2));
+    assert_eq!(e["b"], (3, 3));
+    assert_eq!(e["c"].1, 10);
+    assert_eq!(e["d"], (11, 14));
+    assert_eq!(e["f"], (15, 27));
+    assert_eq!(e["init"], (28, 29));
+    assert_eq!(e["subscript"], (30, 32));
+    assert_eq!(e["o"], (33, 36));
+    assert_eq!(e["arr"], (37, 40));
+    assert_eq!(e["h"], (45, 45));
+    let m = p(src);
+    assert_eq!(ty(&m, "N").methods[0].end_line, 43);
+}
+
+#[test]
+fn enum_and_protocol_end_lines() {
+    let src = "enum E {\n    case a, b\n    case c(\n        Int,\n        String\n    )\n    case d = 3\n}\nprotocol P {\n    var x: Int { get set }\n    func f()\n}\nfunc g() {\n}\nlet t = 1\n";
+    let m = p(src);
+    let e = ty(&m, "E");
+    let v: Vec<_> = e.fields.iter().map(|f| (f.name.as_str(), f.line, f.end_line)).collect();
+    assert_eq!(v, [("a", 2, 2), ("b", 2, 2), ("c", 3, 6), ("d", 7, 7)]);
+    let pr = ty(&m, "P");
+    assert_eq!(pr.fields[0].end_line, 10);
+    assert_eq!(pr.methods[0].end_line, 11);
+    assert_eq!((m.top_level[0].line, m.top_level[0].end_line), (13, 14));
+    assert_eq!(m.top_level[1].end_line, 15);
+}
+
+#[test]
+fn unclosed_body_end_lines() {
+    let m = p("class A {\n    func f() {\n        let x = 1\n    var y = 2\n");
+    let a = ty(&m, "A");
+    assert!(a.methods[0].end_line >= a.methods[0].line);
+    assert_ne!(a.methods[0].end_line, 0);
+    let m = p("class A {\n    var x = Foo(\n");
+    assert_eq!(ty(&m, "A").fields[0].end_line, 2);
+    let m = p("class A {\n    func f(\n");
+    assert_eq!(ty(&m, "A").methods[0].end_line, 2);
+}

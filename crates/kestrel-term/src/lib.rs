@@ -4,6 +4,14 @@
 //! and hands it to a callback in batches (about every 8 ms, or sooner when a
 //! batch reaches 64 KB). A second thread waits for the shell to end and then
 //! calls the exit callback. This crate does not know about Tauri.
+//!
+//! Output is raw bytes. The crate never decodes it, so a character that is cut
+//! in two reads (3 or 4 bytes in UTF-8) reaches the frontend unchanged. The
+//! frontend decodes the bytes as a stream. Input is a `&[u8]` that holds the UTF-8
+//! text of the keys.
+
+pub mod env;
+pub mod zsh;
 
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -43,6 +51,9 @@ pub struct SpawnOptions {
     /// Extra environment variables (the login shell environment). They are added to
     /// the environment of the app. The terminal variables are set after them.
     pub env: Vec<(String, String)>,
+    /// A folder made by `zsh::install`. When it is set and the shell is zsh, zsh
+    /// starts with this folder as `ZDOTDIR` and loads the command line colors.
+    pub zsh_dir: Option<PathBuf>,
 }
 
 /// Picks the shell program.
@@ -111,14 +122,18 @@ impl Session {
         for (k, v) in &opts.env {
             cmd.env(k, v);
         }
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
-        cmd.env("TERM_PROGRAM", "Kestrel");
-        let has_locale = ["LC_ALL", "LANG"]
-            .iter()
-            .any(|k| cmd.get_env(k).and_then(|v| v.to_str()).is_some_and(|v| !v.is_empty()));
-        if !has_locale {
-            cmd.env("LANG", "en_US.UTF-8");
+        // The shell gets the variables of the plan: terminal type, colors for `ls`,
+        // a UTF-8 locale and the zsh folder (see `env::plan_env`).
+        let zsh_dir = opts.zsh_dir.as_deref().filter(|_| zsh::is_zsh(&opts.command.program));
+        let plan = {
+            let get = |k: &str| cmd.get_env(k).and_then(|v| v.to_str()).map(str::to_string);
+            env::plan_env(&get, &env::EnvInput { mac: cfg!(target_os = "macos"), zsh_dir })
+        };
+        for k in &plan.remove {
+            cmd.env_remove(k);
+        }
+        for (k, v) in &plan.set {
+            cmd.env(k, v);
         }
 
         let mut child = pair
@@ -289,6 +304,10 @@ mod tests {
     }
 
     fn start(script: &str) -> Run {
+        start_with(script, vec![])
+    }
+
+    fn start_with(script: &str, env: Vec<(String, String)>) -> Run {
         let dir = tempfile::tempdir().unwrap();
         let (otx, out) = channel();
         let (etx, exit) = channel();
@@ -298,7 +317,8 @@ mod tests {
                 cwd: dir.keep(),
                 cols: 80,
                 rows: 24,
-                env: vec![],
+                env,
+                zsh_dir: None,
             },
             move |b| {
                 let _ = otx.send(b);
@@ -401,5 +421,76 @@ mod tests {
         let d = resolve_shell(Some("  "), Some("/bin/bash"));
         assert_eq!(d, ShellCommand { program: "/bin/bash".into(), args: vec!["-l".into()] });
         assert_eq!(resolve_shell(None, None).args, vec!["-l".to_string()]);
+    }
+
+    /// Output batches as the callback got them, until the shell ends.
+    fn batches(run: &Run) -> Vec<Vec<u8>> {
+        let mut all = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            while let Ok(b) = run.out.try_recv() {
+                all.push(b);
+            }
+            if run.exit.try_recv().is_ok() {
+                while let Ok(b) = run.out.try_recv() {
+                    all.push(b);
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        all
+    }
+
+    /// A 3-byte character (U+65E5, bytes e6 97 a5) and a 4-byte character
+    /// (U+1F600, bytes f0 9f 98 80) arrive in two reads each. The bytes must
+    /// reach the frontend unchanged and in order. The frontend decodes them as a
+    /// stream, so a cut inside a character is fine, but a changed byte is not.
+    #[test]
+    fn utf8_characters_split_across_reads_stay_unchanged() {
+        let run = start(
+            "printf '\\346\\227'; sleep 0.15; printf '\\245'; sleep 0.15; printf '\\360\\237'; sleep 0.15; printf '\\230\\200'; sleep 0.15; printf 'END'",
+        );
+        let parts = batches(&run);
+        let all: Vec<u8> = parts.iter().flatten().copied().collect();
+        let expected = "\u{65E5}\u{1F600}END".as_bytes();
+        assert_eq!(all, expected, "batches were {parts:?}");
+        // The sleeps are longer than the batch time, so a batch ends inside a character.
+        assert!(parts.iter().any(|b| std::str::from_utf8(b).is_err()), "no batch was cut inside a character: {parts:?}");
+        assert!(parts.len() >= 4, "batches were {parts:?}");
+    }
+
+    /// The PTY gets the UTF-8 bytes of what the user types: `ệ` (U+1EC7) is
+    /// e1 bb 87 and `日` is e6 97 a5. `od` prints the bytes the program read.
+    #[test]
+    fn typed_text_reaches_the_pty_as_utf8_bytes() {
+        let run = start("od -An -tx1 -N7");
+        run.session.write("\u{1EC7}\u{65E5}\n".as_bytes()).unwrap();
+        let (text, code) = collect(&run, true);
+        let hex: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(hex.contains("e1 bb 87 e6 97 a5 0a"), "output was {text:?}");
+        assert_eq!(code, Some(0));
+    }
+
+    fn var(k: &str, v: &str) -> (String, String) {
+        (k.to_string(), v.to_string())
+    }
+
+    #[test]
+    fn child_gets_a_utf8_locale_when_the_login_environment_has_lc_all_c() {
+        let run = start_with(
+            "echo ALL=[$LC_ALL] CT=[$LC_CTYPE] COLL=[$LC_COLLATE]",
+            vec![var("LC_ALL", "C"), var("LC_CTYPE", ""), var("LC_COLLATE", ""), var("LANG", "C")],
+        );
+        let (text, _) = collect(&run, true);
+        let want = if cfg!(target_os = "macos") { "UTF-8" } else { "en_US.UTF-8" };
+        assert!(text.contains(&format!("ALL=[] CT=[{want}] COLL=[C]")), "output was {text:?}");
+    }
+
+    #[test]
+    fn child_keeps_the_clicolor_of_the_user() {
+        let run = start_with("echo CL=[$CLICOLOR]", vec![var("CLICOLOR", "0")]);
+        let (text, _) = collect(&run, true);
+        assert!(text.contains("CL=[0]"), "output was {text:?}");
     }
 }

@@ -213,3 +213,93 @@ pub struct UsagesResult {
     pub file_only: bool,
     pub elapsed_ms: u64,
 }
+
+// --- Call hierarchy ------------------------------------------------------------
+
+/// `Lang` with `Deserialize`, for requests that send a target back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodeLang {
+    Kotlin,
+    Java,
+    Swift,
+}
+
+impl From<Lang> for CodeLang {
+    fn from(l: Lang) -> Self {
+        match l {
+            Lang::Kotlin => CodeLang::Kotlin,
+            Lang::Java => CodeLang::Java,
+            Lang::Swift => CodeLang::Swift,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallKind {
+    Method,
+    Constructor,
+    Function,
+    Property,
+    Initializer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallTarget {
+    pub owner: String,
+    pub name: String,
+    pub kind: CallKind,
+    pub params: String,
+    pub path: String,
+    pub line: u32,
+    pub column: u32,
+    pub lang: CodeLang,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallSite {
+    pub line: u32,
+    pub column: u32,
+    pub text: String,
+    pub range: [u32; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallerNode {
+    pub caller: CallTarget,
+    pub sites: Vec<CallSite>,
+    pub likely: bool,
+    pub test: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallAt {
+    pub path: String,
+    pub line: u32,
+    pub column: u32,
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallersRequest {
+    pub root: String,
+    pub at: Option<CallAt>,
+    pub target: Option<CallTarget>,
+    pub max_results: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallersResult {
+    pub target: Option<CallTarget>,
+    pub callers: Vec<CallerNode>,
+    pub exact: bool,
+    pub truncated: bool,
+    pub elapsed_ms: u64,
+}

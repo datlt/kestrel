@@ -1,0 +1,47 @@
+[
+  {
+    "sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "filename": "src/main/kotlin/com/acme/shop/cart/CartService.kt",
+    "status": "modified",
+    "additions": 17,
+    "deletions": 4,
+    "changes": 21,
+    "blob_url": "https://github.example.test/acme/shop/blob/7c1e5a90b3d24f68a1c0e9d57b2f4836ae01d9c4/src/main/kotlin/com/acme/shop/cart/CartService.kt"
+  },
+  {
+    "sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "filename": "src/main/kotlin/com/acme/shop/cart/DiscountRule.kt",
+    "status": "added",
+    "additions": 19,
+    "deletions": 0,
+    "changes": 19,
+    "blob_url": "https://github.example.test/acme/shop/blob/7c1e5a90b3d24f68a1c0e9d57b2f4836ae01d9c4/src/main/kotlin/com/acme/shop/cart/DiscountRule.kt"
+  },
+  {
+    "sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "filename": "src/test/kotlin/com/acme/shop/cart/DiscountRuleTest.kt",
+    "status": "added",
+    "additions": 19,
+    "deletions": 0,
+    "changes": 19,
+    "blob_url": "https://github.example.test/acme/shop/blob/7c1e5a90b3d24f68a1c0e9d57b2f4836ae01d9c4/src/test/kotlin/com/acme/shop/cart/DiscountRuleTest.kt"
+  },
+  {
+    "sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "filename": "src/main/kotlin/com/acme/shop/cart/LegacyCoupon.kt",
+    "status": "removed",
+    "additions": 0,
+    "deletions": 8,
+    "changes": 8,
+    "blob_url": "https://github.example.test/acme/shop/blob/7c1e5a90b3d24f68a1c0e9d57b2f4836ae01d9c4/src/main/kotlin/com/acme/shop/cart/LegacyCoupon.kt"
+  },
+  {
+    "sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "filename": "docs/discounts.md",
+    "status": "modified",
+    "additions": 5,
+    "deletions": 1,
+    "changes": 6,
+    "blob_url": "https://github.example.test/acme/shop/blob/7c1e5a90b3d24f68a1c0e9d57b2f4836ae01d9c4/docs/discounts.md"
+  }
+]

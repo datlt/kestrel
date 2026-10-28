@@ -6,4 +6,4 @@ mod protocol;
 mod render;
 
 pub use protocol::{ByteRange, decode_uri_path, mime_for, parse_range};
-pub use render::render;
+pub use render::{render, render_safe};

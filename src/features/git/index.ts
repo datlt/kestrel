@@ -10,6 +10,7 @@ import { diffTabInput, restoreDiffTab } from './diff-tab';
 import type { DiffContent } from './diff';
 import { createGutter, jumpToChange } from './gutter';
 import { openHistory, restoreHistoryTab } from './history-tab';
+import { BranchSwitcher } from './switcher';
 import { GitService, type GitModel } from './service';
 import { lazyView } from '../lazy-view';
 
@@ -17,6 +18,7 @@ export function initGit(ctx: AppContext): void {
   ctx.settings.registerDefaults({ 'git.enabled': true, 'git.gutter': true });
   const svc = new GitService(ctx);
   const gutter = createGutter(ctx, svc);
+  const switcher = new BranchSwitcher(ctx, svc);
 
   // --- Views, tabs, editor extension ---------------------------------------
   ctx.views.register({
@@ -53,8 +55,8 @@ export function initGit(ctx: AppContext): void {
         align: 'left',
         priority: 100,
         text,
-        tooltip: m.upstream ? `${where} (upstream ${m.upstream}). ${m.count} change(s).` : `${where}. ${m.count} change(s).`,
-        command: 'workbench.showGit',
+        tooltip: `${m.upstream ? `${where} (upstream ${m.upstream})` : where}. ${m.count} change(s). Click to switch branch.`,
+        command: 'git.switchBranch',
       });
     } else {
       ctx.status.remove('git.branch');
@@ -118,6 +120,13 @@ export function initGit(ctx: AppContext): void {
       title: 'Refresh',
       category: 'Git',
       run: () => svc.refresh(),
+    },
+    {
+      id: 'git.switchBranch',
+      title: 'Switch Branch...',
+      category: 'Git',
+      keybinding: 'Mod-Shift-b',
+      run: () => switcher.open(),
     },
     {
       id: 'git.openChanges',

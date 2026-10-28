@@ -2,6 +2,9 @@
 // run as child processes in Rust. The protocol work is done by `@codemirror/lsp-client`,
 // which loads lazily when the first matching file opens.
 import type { AppContext, FileEditor, StatusItem } from "../../core/types";
+import { isInside } from "../../core/util";
+import type { CallHierarchyItem } from "./actions";
+import { uriToPath } from "./uri";
 import "./lsp.css";
 import { LspManager } from "./manager";
 import { createOutputView } from "./output";
@@ -187,6 +190,39 @@ export function initLsp(ctx: AppContext): void {
         const rt = manager.loaded;
         if (!editor || !rt || manager.sessionOfPath(path)?.state !== "ready") return null;
         return rt.actions.referencesAt(editor.view, line, column);
+      },
+    },
+    {
+      // Used by the Call Hierarchy panel. Takes `{ path, line, column }` for the root, or
+      // `{ item }` (an LSP CallHierarchyItem) for a deeper level. Returns `{ item, calls }`,
+      // or null when no server is ready or the server has no call hierarchy.
+      id: "lsp.incomingCalls",
+      title: "Incoming Calls",
+      category,
+      hidden: true,
+      run: async (arg?: {
+        path?: string;
+        line?: number;
+        column?: number;
+        item?: CallHierarchyItem;
+      }) => {
+        const rt = manager.loaded;
+        if (!arg || !rt) return null;
+        if (arg.item) {
+          const path = uriToPath(arg.item.uri);
+          const session = path
+            ? (manager.sessionOfPath(path) ??
+              manager.list().find((s) => s.state === "ready" && isInside(path, s.root)))
+            : undefined;
+          if (!session || session.state !== "ready") return null;
+          return rt.actions.incomingCalls(session.client, { item: arg.item });
+        }
+        const { path, line, column } = arg;
+        if (typeof path !== "string" || typeof line !== "number" || typeof column !== "number") return null;
+        const editor = ctx.editors.get(path);
+        const session = manager.sessionOfPath(path);
+        if (!editor || !session || session.state !== "ready") return null;
+        return rt.actions.incomingCalls(session.client, { view: editor.view, line, column });
       },
     },
     {

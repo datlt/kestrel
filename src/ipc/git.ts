@@ -164,3 +164,91 @@ export interface GitBlameRange {
  */
 export const gitBlame = (root: string, path: string, contents?: string | null) =>
   invoke<GitBlameRange[]>('git_blame', { root, path, contents: contents ?? null });
+
+// --- Branch switcher ------------------------------------------------------------
+
+export interface GitLocalBranch {
+  name: string;
+  current: boolean;
+  /** Short hash of the last commit. */
+  sha: string;
+  /** Time of the last commit in seconds since the Unix epoch. */
+  time: number;
+  /** First line of the message of the last commit. */
+  subject: string;
+  /** For example `origin/main`. null when the branch has no upstream. */
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  /** The upstream branch was deleted on the remote. */
+  gone: boolean;
+}
+
+export interface GitRemoteBranch {
+  /** Full short name, for example `origin/feature/x`. */
+  name: string;
+  /** Name of the remote, for example `origin`. */
+  remote: string;
+  sha: string;
+  time: number;
+  subject: string;
+}
+
+export interface GitBranchList {
+  /** null when HEAD is detached. */
+  current: string | null;
+  detached: boolean;
+  /** Short hash of HEAD. null in a repo without commits. */
+  head: string | null;
+  /** Newest commit first. */
+  local: GitLocalBranch[];
+  /** Newest commit first. Remote HEAD pointers are left out. */
+  remote: GitRemoteBranch[];
+}
+
+/** One `git for-each-ref` call. Fast with thousands of branches. */
+export const gitBranchList = (root: string) => invoke<GitBranchList>('git_branch_list', { root });
+
+export interface GitSwitchOptions {
+  /** A remote branch such as `origin/feature`: `git switch --track`. */
+  track?: string;
+  /** Make a new branch named `branch`: `git switch -c`. */
+  create?: boolean;
+  /** Where the new branch starts (a branch or commit). */
+  startPoint?: string;
+}
+
+/**
+ * Switches branch. Never forces. Rejects with code `conflict` (the message is
+ * git's text) when local changes or untracked files block the switch,
+ * `already_exists` for a new name that is taken, `not_found` for an unknown branch.
+ */
+export const gitSwitch = (root: string, branch: string, options?: GitSwitchOptions) =>
+  invoke<null>('git_switch', { root, branch, options: options ?? null });
+
+/** `git stash push -u -m <message>`. `created` is false when there was nothing to stash. */
+export const gitStashPush = (root: string, message: string) =>
+  invoke<{ created: boolean }>('git_stash_push', { root, message });
+
+/**
+ * Applies and removes the newest stash that Kestrel made before a switch.
+ * Rejects with `not_found` when there is none, `conflict` (git's message) when
+ * it does not apply cleanly. Git keeps the stash then.
+ */
+export const gitStashPop = (root: string) => invoke<null>('git_stash_pop', { root });
+
+/** `git fetch --prune --all`. Stops after 120 s (rejects with `io`). Never asks for a password. */
+export const gitFetch = (root: string) => invoke<null>('git_fetch', { root });
+
+/** Stops a running `gitFetch` of this window and root. The fetch rejects with `cancelled`. */
+export const gitFetchCancel = (root: string) => invoke<null>('git_fetch_cancel', { root });
+
+export interface GitNameCheck {
+  valid: boolean;
+  /** Plain text that says what is wrong. null when the name is fine. */
+  message: string | null;
+}
+
+/** `git check-ref-format --branch`, and a check that the name is not taken. */
+export const gitValidateBranchName = (root: string, name: string) =>
+  invoke<GitNameCheck>('git_validate_branch_name', { root, name });

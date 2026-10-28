@@ -16,7 +16,9 @@ import {
   type Split,
   type SplitDir,
 } from './layout';
-import { TerminalPane } from './pane';
+import { isImeKey } from './ime';
+import { TerminalPane, type PaneInit } from './pane';
+import type { RunArgs } from './run';
 
 export const VIEW_ID = 'terminal';
 
@@ -51,6 +53,8 @@ export class TerminalPanel implements ViewInstance {
   private everHadTab = false;
   private visible = false;
   private disposed = false;
+  /** The tab that `onShow` opened by itself. */
+  private autoTab: TabState | null = null;
 
   private tabsEl = h('div', { class: 'term-tabs', role: 'tablist' });
   private bodies = h('div', { class: 'term-bodies' });
@@ -114,8 +118,10 @@ export class TerminalPanel implements ViewInstance {
   onShow(): void {
     this.visible = true;
     // The first time the panel opens it starts one terminal.
-    if (!this.everHadTab && this.tabs.length === 0) this.newTab();
-    else this.fitAll();
+    if (!this.everHadTab && this.tabs.length === 0) {
+      this.newTab();
+      this.autoTab = this.current;
+    } else this.fitAll();
   }
 
   onHide(): void {
@@ -145,11 +151,23 @@ export class TerminalPanel implements ViewInstance {
 
   // --- Tabs ------------------------------------------------------------------
 
-  newTab(): void {
+  /**
+   * Opens a new tab. `terminal.run` gives a title, a folder and a command.
+   * The panel opens one tab by itself the first time it shows. When you did not
+   * use that tab yet, the new tab replaces it, so `terminal.run` does not leave
+   * an empty shell behind.
+   */
+  newTab(opts: Partial<RunArgs> = {}): void {
     if (this.disposed) return;
+    const auto = this.autoTab;
+    this.autoTab = null;
+    if (opts.command && auto && this.tabs.length === 1 && this.tabs[0] === auto && [...auto.panes.values()].every((p) => !p.typed)) {
+      this.closeTab(auto);
+    }
     this.everHadTab = true;
     const n = ++this.tabCounter;
-    const titleEl = h('span', { class: 'term-tab-title' }, `Terminal ${n}`);
+    const first = opts.title?.trim() || `Terminal ${n}`;
+    const titleEl = h('span', { class: 'term-tab-title' }, first);
     const closeBtn = h(
       'button',
       { class: 'term-tab-close', title: 'Close terminal', 'aria-label': 'Close terminal', tabindex: -1 },
@@ -159,8 +177,9 @@ export class TerminalPanel implements ViewInstance {
     const body = h('div', { class: 'term-tab-body', hidden: true });
     const tab: TabState = {
       id: n,
-      title: `Terminal ${n}`,
-      custom: false,
+      title: first,
+      // A title that was given is kept. The shell does not rename the tab then.
+      custom: !!opts.title?.trim(),
       root: leaf(''),
       active: '',
       panes: new Map(),
@@ -168,7 +187,7 @@ export class TerminalPanel implements ViewInstance {
       tabEl,
       titleEl,
     };
-    const pane = this.createPane(tab);
+    const pane = this.createPane(tab, { cwd: opts.cwd, command: opts.command });
     tab.root = leaf(pane.id);
     tab.active = pane.id;
 
@@ -245,7 +264,8 @@ export class TerminalPanel implements ViewInstance {
     };
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
-      if (e.isComposing) return;
+      // WebKit sends the Enter that confirms a conversion with keyCode 229 and isComposing false.
+      if (isImeKey(e)) return;
       if (e.key === 'Enter') finish(true);
       else if (e.key === 'Escape') finish(false);
     });
@@ -286,24 +306,28 @@ export class TerminalPanel implements ViewInstance {
     });
   }
 
-  private createPane(tab: TabState): TerminalPane {
+  private createPane(tab: TabState, init: PaneInit = {}): TerminalPane {
     const id = `p${++this.paneCounter}`;
-    const pane = new TerminalPane(id, {
-      cwd: () => this.workspaceRoot(),
-      settings: () => this.ctx.settings.all(),
-      onFocus: (p) => {
-        if (tab.active !== p.id && tab.panes.has(p.id)) {
-          tab.active = p.id;
-          this.refreshActive(tab);
-        }
+    const pane = new TerminalPane(
+      id,
+      {
+        cwd: () => this.workspaceRoot(),
+        settings: () => this.ctx.settings.all(),
+        onFocus: (p) => {
+          if (tab.active !== p.id && tab.panes.has(p.id)) {
+            tab.active = p.id;
+            this.refreshActive(tab);
+          }
+        },
+        onTitle: (p, title) => {
+          if (tab.active === p.id) this.setTitle(tab, title);
+        },
+        onCloseRequest: (p) => this.closePane(tab, p.id),
+        onContextMenu: (p, e) => this.showMenu(tab, p, e),
+        onError: (message) => this.ctx.ui.notify(message, { kind: 'error' }),
       },
-      onTitle: (p, title) => {
-        if (tab.active === p.id) this.setTitle(tab, title);
-      },
-      onCloseRequest: (p) => this.closePane(tab, p.id),
-      onContextMenu: (p, e) => this.showMenu(tab, p, e),
-      onError: (message) => this.ctx.ui.notify(message, { kind: 'error' }),
-    });
+      init,
+    );
     tab.panes.set(id, pane);
     return pane;
   }

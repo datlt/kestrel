@@ -90,3 +90,43 @@ describe('clipboardAction', () => {
     expect(clipboardAction(key('KeyC', { metaKey: true }), true)).toBeNull();
   });
 });
+
+describe('keys of an input method (IME)', () => {
+  const ime = (code: string, mods: Partial<KeyLike> = {}) => key(code, { keyCode: 229, ...mods });
+
+  it('are never app shortcuts, also with the app modifiers', () => {
+    // Cmd-w, Cmd-k, Cmd-\ , Ctrl-` and Cmd-f must not run while a composition is active.
+    for (const code of ['KeyW', 'KeyK', 'Backslash', 'KeyF', 'KeyP']) {
+      expect(routeKey(ime(code, { metaKey: true }), true)).toBe('term');
+      expect(routeKey(key(code, { metaKey: true, isComposing: true }), true)).toBe('term');
+    }
+    expect(routeKey(ime('Backquote', { ctrlKey: true }), true)).toBe('term');
+    expect(routeKey(ime('KeyW', { ctrlKey: true }), false)).toBe('term');
+  });
+
+  it('go to the input method when isComposing is true, whatever the key code is', () => {
+    expect(routeKey(key('Enter', { isComposing: true, keyCode: 13 }), true)).toBe('term');
+    expect(routeKey(key('Backspace', { isComposing: true, keyCode: 8 }), true)).toBe('term');
+    expect(routeKey(key('Space', { isComposing: true, keyCode: 32 }), true)).toBe('term');
+  });
+
+  it('treats the key name "Process" as an IME key', () => {
+    expect(routeKey(key('KeyA', { key: 'Process', metaKey: true }), true)).toBe('term');
+  });
+
+  it('does not close a pane whose shell ended', () => {
+    expect(isClosingKey(ime('Enter'))).toBe(false);
+    expect(isClosingKey(key('Enter', { isComposing: true }))).toBe(false);
+    expect(isClosingKey(key('Enter', { keyCode: 13 }))).toBe(true);
+  });
+
+  it('are not copy or paste on Windows and Linux', () => {
+    expect(clipboardAction(ime('KeyC', { ctrlKey: true, shiftKey: true }), false)).toBeNull();
+    expect(clipboardAction(key('KeyC', { ctrlKey: true, shiftKey: true }), false)).toBe('copy');
+  });
+
+  it('leave normal keys alone', () => {
+    expect(routeKey(key('KeyW', { metaKey: true, keyCode: 87 }), true)).toBe('app');
+    expect(routeKey(key('KeyA', { keyCode: 65 }), true)).toBe('term');
+  });
+});

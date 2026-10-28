@@ -7,6 +7,7 @@
 //! `Git::status` can be cancelled: a newer status request for the same root
 //! kills the older git process.
 
+mod branch;
 mod history;
 mod parse;
 mod run;
@@ -21,6 +22,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+pub use branch::{
+    branch_list, stash_pop, stash_push, switch, validate_branch_name, BranchList, LocalBranch, NameCheck, RemoteBranch,
+    StashResult, SwitchOptions, FETCH_TIMEOUT, STASH_PREFIX,
+};
 pub use history::{blame, commit_info, log, BlameRange, LogEntry};
 pub use run::Job;
 use run::{failure, run, run_ok};

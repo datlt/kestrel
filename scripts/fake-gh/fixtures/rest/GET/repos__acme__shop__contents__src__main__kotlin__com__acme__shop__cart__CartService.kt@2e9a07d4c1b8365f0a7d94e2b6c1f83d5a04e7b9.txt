@@ -1,0 +1,26 @@
+package com.acme.shop.cart
+
+import com.acme.shop.catalog.Product
+import com.acme.shop.money.Money
+
+/** Keeps the items of one shopping cart and calculates the price. */
+class CartService(private val prices: PriceList) {
+    private val items = mutableListOf<CartItem>()
+
+    fun add(product: Product, quantity: Int = 1) {
+        require(quantity > 0) { "Quantity must be positive" }
+        items += CartItem(product, quantity)
+    }
+
+    fun total(): Money {
+        var sum = Money.ZERO
+        for (item in items) {
+            sum += prices.priceOf(item.product) * item.quantity
+        }
+        return sum
+    }
+
+    fun clear() {
+        items.clear()
+    }
+}

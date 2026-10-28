@@ -11,6 +11,11 @@ export interface TermSpawnOptions {
   rows: number;
   /** Program (and arguments) to run. Empty or missing: the `terminal.shell` default of Rust. */
   shell?: string;
+  /**
+   * Setting `terminal.highlightCommands`. When true (the default) and the shell is
+   * zsh, Rust starts zsh with the Kestrel ZDOTDIR and the command line colors.
+   */
+  highlight?: boolean;
 }
 
 /** A running shell. */
@@ -58,6 +63,7 @@ export async function termSpawn(
     cols: opts.cols,
     rows: opts.rows,
     shell: opts.shell || null,
+    highlight: opts.highlight ?? true,
     channel,
     events,
   });

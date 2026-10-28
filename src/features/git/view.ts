@@ -35,6 +35,17 @@ export function createGitView(ctx: AppContext, svc: GitService, host: HTMLElemen
   let selected = -1;
 
   const branchEl = h('span', { class: 'git-branch-name' });
+  const branchBtn = h(
+    'button',
+    {
+      class: 'git-branch-btn',
+      type: 'button',
+      title: 'Switch branch',
+      onclick: () => void ctx.commands.execute('git.switchBranch'),
+    },
+    branchEl,
+    createElement(ChevronDown),
+  );
   const baseBtn = h('button', {
     class: 'git-base',
     type: 'button',
@@ -49,7 +60,7 @@ export function createGitView(ctx: AppContext, svc: GitService, host: HTMLElemen
   const header = h(
     'div',
     { class: 'git-header' },
-    h('div', { class: 'git-header-row' }, createElement(GitBranch), branchEl, h('span', { class: 'git-spacer' }), refreshBtn),
+    h('div', { class: 'git-header-row' }, createElement(GitBranch), branchBtn, h('span', { class: 'git-spacer' }), refreshBtn),
     baseBtn,
   );
   const spacer = h('div', { class: 'git-spacer-box' });
@@ -113,6 +124,7 @@ export function createGitView(ctx: AppContext, svc: GitService, host: HTMLElemen
     const m = svc.model;
     if (!m) {
       branchEl.textContent = '';
+      branchBtn.title = 'Switch branch';
       baseBtn.style.display = 'none';
       return;
     }
@@ -121,7 +133,7 @@ export function createGitView(ctx: AppContext, svc: GitService, host: HTMLElemen
     if (m.ahead) text += ` ↑${m.ahead}`;
     if (m.behind) text += ` ↓${m.behind}`;
     branchEl.textContent = text;
-    branchEl.title = m.upstream ? `${where}, upstream ${m.upstream}` : where;
+    branchBtn.title = m.upstream ? `${where}, upstream ${m.upstream}. Switch branch...` : `${where}. Switch branch...`;
     baseBtn.style.display = '';
     baseBtn.textContent = m.baseName === 'HEAD' ? 'Working tree vs HEAD' : `Working tree vs ${m.baseName} (merge base)`;
   }

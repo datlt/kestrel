@@ -24,6 +24,7 @@ kestrel-db = { path = "crates/kestrel-db" }
 kestrel-term = { path = "crates/kestrel-term" }
 kestrel-lang = { path = "crates/kestrel-lang" }
 kestrel-code = { path = "crates/kestrel-code" }
+kestrel-gh = { path = "crates/kestrel-gh" }
 
 [profile.release]
 codegen-units = 1

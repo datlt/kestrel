@@ -206,6 +206,11 @@ export interface Settings {
   /** Lines kept above the screen. */
   'terminal.scrollback': number;
   'terminal.cursorBlink': boolean;
+  /**
+   * Colors for the zsh command line: the command name (green or red), options,
+   * strings, variables and comments. Read when a shell starts.
+   */
+  'terminal.highlightCommands': boolean;
 }
 
 export interface SettingsService {

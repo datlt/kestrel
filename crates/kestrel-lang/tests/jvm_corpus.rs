@@ -53,12 +53,23 @@ fn corpus() {
 
     let mut types = 0usize;
     let mut members = 0usize;
+    let mut bad_lines = 0usize;
     let mut slow: Vec<(f64, usize, PathBuf)> = Vec::new();
     let t0 = Instant::now();
     for (p, lang, text) in &files {
         let t = Instant::now();
         let m = parse(*lang, text);
         let dt = t.elapsed().as_secs_f64();
+        for t in &m.types {
+            for f in t.fields.iter().chain(t.methods.iter()) {
+                if f.end_line < f.line || f.line < t.start_line || f.end_line > t.end_line {
+                    bad_lines += 1;
+                    if bad_lines <= 5 {
+                        println!("  bad end_line {} {}..{} in type {} {}..{}: {}", f.name, f.line, f.end_line, t.name, t.start_line, t.end_line, p.display());
+                    }
+                }
+            }
+        }
         types += m.types.len();
         members += m.top_level.len() + m.types.iter().map(|t| t.fields.len() + t.methods.len()).sum::<usize>();
         slow.push((dt, text.len(), p.clone()));
@@ -78,6 +89,8 @@ fn corpus() {
     println!("parse: {secs:.3} s, {:.0} MB/s", mb / secs.max(1e-9));
     println!("find_identifiers({name}): {secs_find:.3} s, {:.0} MB/s, {hits} hits", mb / secs_find.max(1e-9));
     println!("types: {types}");
+    println!("members with a bad end_line: {bad_lines}");
+    assert_eq!(bad_lines, 0);
     println!("members: {members}");
     slow.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     println!("slowest files:");

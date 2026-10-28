@@ -1,0 +1,152 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "id": "PR_101",
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": [
+            {
+              "id": "PRRT_1",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/main/kotlin/com/acme/shop/cart/CartService.kt",
+              "line": 30,
+              "startLine": 28,
+              "originalLine": 30,
+              "originalStartLine": 28,
+              "diffSide": "RIGHT",
+              "startDiffSide": "RIGHT",
+              "viewerCanResolve": true,
+              "viewerCanUnresolve": false,
+              "comments": {
+                "nodes": [
+                  {
+                    "id": "PRRC_1",
+                    "databaseId": 5001,
+                    "body": "Can the discount be bigger than the subtotal? Two rules could together take more than 100 percent.\n\n```kotlin\nreturn (subtotal - discount).coerceAtLeast(Money.ZERO)\n```",
+                    "createdAt": "2026-10-26T14:05:00Z",
+                    "state": "SUBMITTED",
+                    "author": {
+                      "login": "bob-reviewer"
+                    }
+                  },
+                  {
+                    "id": "PRRC_2",
+                    "databaseId": 5002,
+                    "body": "Good point. I will add a test for it.",
+                    "createdAt": "2026-10-26T15:00:00Z",
+                    "state": "SUBMITTED",
+                    "author": {
+                      "login": "mira-dev"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_2",
+              "isResolved": false,
+              "isOutdated": true,
+              "path": "src/main/kotlin/com/acme/shop/cart/CartService.kt",
+              "line": null,
+              "startLine": null,
+              "originalLine": 18,
+              "originalStartLine": null,
+              "diffSide": "LEFT",
+              "startDiffSide": "LEFT",
+              "viewerCanResolve": true,
+              "viewerCanUnresolve": false,
+              "comments": {
+                "nodes": [
+                  {
+                    "id": "PRRC_3",
+                    "databaseId": 5003,
+                    "body": "You could use `sumOf` here.",
+                    "createdAt": "2026-10-24T17:45:00Z",
+                    "state": "SUBMITTED",
+                    "author": {
+                      "login": "kenji-w"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_3",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "src/main/kotlin/com/acme/shop/cart/DiscountRule.kt",
+              "line": 16,
+              "startLine": null,
+              "originalLine": 16,
+              "originalStartLine": null,
+              "diffSide": "RIGHT",
+              "startDiffSide": "RIGHT",
+              "viewerCanResolve": false,
+              "viewerCanUnresolve": true,
+              "comments": {
+                "nodes": [
+                  {
+                    "id": "PRRC_4",
+                    "databaseId": 5004,
+                    "body": "Should `subtotal == minimum` give the discount?",
+                    "createdAt": "2026-10-26T14:07:00Z",
+                    "state": "SUBMITTED",
+                    "author": {
+                      "login": "bob-reviewer"
+                    }
+                  },
+                  {
+                    "id": "PRRC_5",
+                    "databaseId": 5005,
+                    "body": "Yes. The test `ten percent at the minimum` covers it.",
+                    "createdAt": "2026-10-26T15:02:00Z",
+                    "state": "SUBMITTED",
+                    "author": {
+                      "login": "mira-dev"
+                    }
+                  }
+                ]
+              },
+              "resolvedBy": {
+                "login": "mira-dev"
+              }
+            },
+            {
+              "id": "PRRT_4",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/main/kotlin/com/acme/shop/cart/LegacyCoupon.kt",
+              "line": 5,
+              "startLine": null,
+              "originalLine": 5,
+              "originalStartLine": null,
+              "diffSide": "LEFT",
+              "startDiffSide": "LEFT",
+              "viewerCanResolve": true,
+              "viewerCanUnresolve": false,
+              "comments": {
+                "nodes": [
+                  {
+                    "id": "PRRC_6",
+                    "databaseId": 5006,
+                    "body": "Does any mobile app still send these codes?",
+                    "createdAt": "2026-10-27T08:00:00Z",
+                    "state": "SUBMITTED",
+                    "author": {
+                      "login": "octo-fake"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

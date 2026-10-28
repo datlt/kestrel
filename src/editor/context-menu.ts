@@ -33,6 +33,7 @@ export const editorContextMenu = EditorView.domEventHandlers({
 export const COMMAND_ITEMS: readonly { id: string; label: string }[] = [
   { id: 'lsp.gotoDefinition', label: 'Go to Definition' },
   { id: 'usages.find', label: 'Find Usages' },
+  { id: 'callHierarchy.show', label: 'Show Call Hierarchy' },
   { id: 'diagram.showForCursor', label: 'Show Class Diagram' },
   { id: 'lsp.rename', label: 'Rename Symbol' },
   { id: 'lsp.format', label: 'Format Document' },

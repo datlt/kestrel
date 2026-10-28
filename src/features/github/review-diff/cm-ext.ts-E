@@ -1,0 +1,257 @@
+// CodeMirror parts of the review diff: the field with the widgets and line marks, the
+// widgets, the "+" gutter, the hover line and the old line numbers in the unified layout.
+
+import { StateEffect, StateField, type Extension } from '@codemirror/state';
+import {
+  Decoration,
+  EditorView,
+  GutterMarker,
+  ViewPlugin,
+  WidgetType,
+  gutter,
+  type DecorationSet,
+  type ViewUpdate,
+} from '@codemirror/view';
+
+/** Replaces all widgets and marks of an editor. */
+export const setDecos = StateEffect.define<DecorationSet>();
+
+export const decoField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setDecos)) return e.value;
+    return value.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** Gives the DOM of a thread or a comment box. The element stays the same for the life of the item. */
+export interface ItemHost {
+  dom(key: string): HTMLElement;
+  height(key: string): number;
+}
+
+/** A block widget with a thread or a comment box. */
+export class ItemWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    private host: ItemHost,
+  ) {
+    super();
+  }
+  eq(other: WidgetType): boolean {
+    return other instanceof ItemWidget && other.key === this.key;
+  }
+  toDOM(): HTMLElement {
+    // A new slot each time. The item element moves into it, so CodeMirror never removes the item itself.
+    const slot = document.createElement('div');
+    slot.className = 'review-diff-slot';
+    slot.append(this.host.dom(this.key));
+    return slot;
+  }
+  get estimatedHeight(): number {
+    return this.host.height(this.key);
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+/** Empty block of the same height on the other side of a split diff, so both sides stay aligned. */
+export class GhostWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    readonly height: number,
+  ) {
+    super();
+  }
+  eq(other: WidgetType): boolean {
+    return other instanceof GhostWidget && other.key === this.key && Math.abs(other.height - this.height) < 1;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement('div');
+    el.className = 'review-diff-ghost';
+    el.style.height = `${this.height}px`;
+    return el;
+  }
+  updateDOM(dom: HTMLElement): boolean {
+    dom.style.height = `${this.height}px`;
+    return true;
+  }
+  get estimatedHeight(): number {
+    return this.height;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+export const itemDeco = (key: string, host: ItemHost, side: number) =>
+  Decoration.widget({ widget: new ItemWidget(key, host), block: true, side });
+
+export const ghostDeco = (key: string, height: number) =>
+  Decoration.widget({ widget: new GhostWidget(key, height), block: true, side: 1 });
+
+export const lineDeco = (cls: string) => Decoration.line({ class: cls });
+
+// --- Hover line and the "+" gutter ------------------------------------------------------
+
+const setHover = StateEffect.define<number>();
+
+/** The line number (1-based) under the mouse, or 0. */
+export const hoverField = StateField.define<number>({
+  create: () => 0,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setHover)) return e.value;
+    return value;
+  },
+});
+
+class PlusMarker extends GutterMarker {
+  constructor(private on: boolean) {
+    super();
+  }
+  eq(other: GutterMarker): boolean {
+    return other instanceof PlusMarker && other.on === this.on;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement('span');
+    el.className = this.on ? 'review-diff-plus review-diff-plus-on' : 'review-diff-plus';
+    el.textContent = '+';
+    el.title = 'Add a comment. Drag to select several lines.';
+    return el;
+  }
+}
+const PLUS = new PlusMarker(false);
+const PLUS_ON = new PlusMarker(true);
+
+export type LineDown = (view: EditorView, line: number, e: MouseEvent, fromPlus: boolean) => void;
+
+/** The "+" column, the hover tracking and the mouse handler for the gutter. */
+export function plusGutter(onDown: LineDown): Extension {
+  return [
+    hoverField,
+    gutter({
+      class: 'review-diff-plus-gutter',
+      lineMarker: (view, line) => (view.state.field(hoverField) === view.state.doc.lineAt(line.from).number ? PLUS_ON : PLUS),
+      lineMarkerChange: (u) => u.startState.field(hoverField) !== u.state.field(hoverField),
+      initialSpacer: () => PLUS,
+      domEventHandlers: {
+        mousedown(view, line, e) {
+          onDown(view, view.state.doc.lineAt(line.from).number, e as MouseEvent, true);
+          return true;
+        },
+      },
+    }),
+    EditorView.domEventHandlers({
+      mousemove(e, view) {
+        const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false);
+        const n = view.state.doc.lineAt(pos).number;
+        if (view.state.field(hoverField) !== n) view.dispatch({ effects: setHover.of(n) });
+      },
+      mouseleave(_e, view) {
+        if (view.state.field(hoverField) !== 0) view.dispatch({ effects: setHover.of(0) });
+      },
+    }),
+  ];
+}
+
+// --- Old line numbers in the deleted blocks of the unified layout ------------------------
+
+export interface DeletedLinesOptions {
+  /** Old line number of the first line of the deleted block that is drawn at `pos`, or null. */
+  firstOldLine(view: EditorView, pos: number): number | null;
+  /** Null: no "+" button (the user cannot comment). */
+  onDown: LineDown | null;
+  /** Called with the old line and the event, when the user presses on a number of a deleted line. */
+  onNumberDown: (view: EditorView, oldLine: number, e: MouseEvent) => void;
+}
+
+/**
+ * The unified layout draws deleted lines inside a widget of the merge package, without
+ * line numbers. This plugin adds the old line number and a "+" button to each deleted
+ * line. The old line is saved as `data-old-line` on the line.
+ */
+export function deletedLineNumbers(opts: DeletedLinesOptions): Extension {
+  return ViewPlugin.fromClass(
+    class {
+      raf = 0;
+      constructor(private view: EditorView) {
+        this.schedule();
+      }
+      update(_u: ViewUpdate) {
+        this.schedule();
+      }
+      schedule() {
+        if (this.raf) return;
+        this.raf = requestAnimationFrame(() => {
+          this.raf = 0;
+          this.decorate();
+        });
+      }
+      decorate() {
+        const view = this.view;
+        const gutters = view.dom.querySelector<HTMLElement>('.cm-gutters');
+        if (gutters) view.dom.style.setProperty('--review-diff-gutter-w', `${gutters.offsetWidth}px`);
+        for (const chunk of view.dom.querySelectorAll<HTMLElement>('.cm-deletedChunk')) {
+          let pos: number;
+          try {
+            pos = view.posAtDOM(chunk);
+          } catch {
+            continue;
+          }
+          const first = opts.firstOldLine(view, pos);
+          if (first == null) continue;
+          const lines = chunk.querySelectorAll<HTMLElement>(':scope > .cm-deletedLine');
+          lines.forEach((line, i) => {
+            const n = first + i;
+            if (line.dataset.oldLine === String(n)) return;
+            line.dataset.oldLine = String(n);
+            line.querySelector('.review-diff-oldnum')?.remove();
+            const num = document.createElement('span');
+            num.className = 'review-diff-oldnum';
+            if (opts.onDown) {
+              const plus = document.createElement('span');
+              plus.className = 'review-diff-plus';
+              plus.textContent = '+';
+              plus.title = 'Add a comment. Drag to select several lines.';
+              plus.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                opts.onDown?.(view, n, e, true);
+              });
+              num.append(plus);
+            }
+            const text = document.createElement('span');
+            text.className = 'review-diff-oldnum-text';
+            text.textContent = String(n);
+            text.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              opts.onNumberDown(view, n, e);
+            });
+            num.append(text);
+            line.prepend(num);
+          });
+        }
+      }
+      destroy() {
+        if (this.raf) cancelAnimationFrame(this.raf);
+      }
+    },
+  );
+}
+
+// --- Collapsed unchanged lines ----------------------------------------------------------
+
+/** Start position of the folded block of unchanged lines that contains `pos`, or null. */
+export function collapsedStartAt(view: EditorView, pos: number): number | null {
+  for (const v of view.state.facet(EditorView.decorations)) {
+    if (typeof v === 'function') continue;
+    let found: number | null = null;
+    v.between(pos, pos, (from, _to, deco) => {
+      const w = (deco.spec as { widget?: { type?: string } }).widget;
+      if (w?.type === 'collapsed-unchanged-code') found = from;
+    });
+    if (found != null) return found;
+  }
+  return null;
+}

@@ -142,7 +142,7 @@ fn want_for(rel: &[RelationKind]) -> Want {
     Want { parts, deps }
 }
 
-fn params_text(m: &Member, lang: Lang) -> String {
+pub(crate) fn params_text(m: &Member, lang: Lang) -> String {
     let mut s = String::new();
     for (i, p) in m.params.iter().enumerate() {
         if i > 0 {

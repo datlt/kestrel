@@ -52,6 +52,7 @@ fn member(name: &str, kind: MemberKind, t: Option<TypeRef>) -> Member {
         receiver: None,
         line: 2,
         column: 5,
+        end_line: 0,
     }
 }
 
@@ -79,6 +80,7 @@ fn file(path: &str, lang: Lang, package: &str, imports: Vec<Import>, types: Vec<
         lang,
         mtime_ms: 0,
         size: 0,
+        words: Box::new([]),
         model: crate::cmodel::CModel::from_model(&FileModel { package: package.into(), imports, types, top_level: vec![] }),
     })
 }
@@ -727,6 +729,7 @@ mod files {
     use super::*;
     use std::fs;
     use std::path::Path;
+    use crate::internals;
 
     fn write(root: &Path, rel: &str, text: &str) {
         let p = root.join(rel);
@@ -890,6 +893,257 @@ mod files {
         assert_eq!(likely, vec!["Caller.kt", "Fake.kt", "Port.kt", "Real.kt"], "interface, sibling and caller");
         // The same name elsewhere is kept, in a file that is not likely.
         assert_eq!(files_of(&res, r, false), vec!["Unrelated.kt"]);
+    }
+
+    #[test]
+    fn word_prefilter_skips_files_without_the_name() {
+        if !kotlin_ready() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "Foo.kt", "package p\n\nclass Foo\n");
+        write(r, "Use.kt", "package p\n\nval x: Foo? = null\n");
+        write(r, "Comment.kt", "package p\n\n// Foo is mentioned here\nval s = \"Foo\"\n");
+        write(r, "Other.kt", "package p\n\nclass Bar\n");
+        write(r, "Alias.kt", "package q\n\nimport p.Foo as Baz\n\nval y: Baz? = null\n");
+        let cancel = AtomicBool::new(false);
+        let root = r.canonicalize().unwrap();
+        let index = internals::build_index(&root, &cancel).unwrap();
+        let words = |rel: &str| index.file(index.file_id(&root.join(rel)).unwrap()).words.clone();
+        assert!(internals::may_hold(&words("Comment.kt"), "Foo"), "a comment is a candidate");
+        assert!(internals::may_hold(&words("Use.kt"), "Foo"));
+        assert!(!internals::may_hold(&words("Other.kt"), "Foo"));
+        assert!(internals::may_hold(&words("Alias.kt"), "Baz"), "the alias is a word of the file");
+        assert!(words("Foo.kt").windows(2).all(|w| w[0] < w[1]), "sorted and unique");
+        // The search gives no match in the comment file.
+        let m = CodeManager::new();
+        let res = usages(&m, r, "Foo.kt", 3, 8);
+        let names = files_of(&res, r, true);
+        assert_eq!(names, vec!["Alias.kt", "Foo.kt", "Use.kt"]);
+        assert!(!res.files.iter().any(|f| f.path.ends_with("Comment.kt") || f.path.ends_with("Other.kt")));
+        // An update changes the list.
+        write(r, "Other.kt", "package p\n\nclass Bar { val f: Foo? = null }\n");
+        let p = root.join("Other.kt");
+        let newer = internals::update_index(&index, &[p.clone()], false, &cancel).unwrap();
+        let w = newer.file(newer.file_id(&p).unwrap()).words.clone();
+        assert!(internals::may_hold(&w, "Foo"));
+        assert!(w.len() > words("Other.kt").len());
+        // And the search through the manager sees the change after `update`.
+        m.update(&r.to_string_lossy(), &[p.to_string_lossy().into_owned()], false).unwrap();
+        let res = usages(&m, r, "Foo.kt", 3, 8);
+        assert!(files_of(&res, r, true).contains(&"Other.kt".to_string()));
+    }
+
+    // --- Callers ---
+
+    fn cursor(root: &Path, rel: &str, needle: &str, delta: usize) -> (u32, u32) {
+        let text = fs::read_to_string(root.join(rel)).unwrap();
+        let i = text.find(needle).unwrap_or_else(|| panic!("{needle} not in {rel}"));
+        let line = text[..i].matches('\n').count() as u32 + 1;
+        let col = (i - text[..i].rfind('\n').map_or(0, |n| n + 1)) as u32 + 1 + delta as u32;
+        (line, col)
+    }
+
+    fn callers_at(m: &CodeManager, root: &Path, rel: &str, needle: &str, delta: usize) -> CallersResult {
+        let (line, column) = cursor(root, rel, needle, delta);
+        let req = CallersRequest {
+            root: root.to_string_lossy().into(),
+            at: Some(CallAt { path: root.join(rel).to_string_lossy().into(), line, column, text: None }),
+            target: None,
+            max_results: 1000,
+        };
+        m.callers("w1", &req, &AtomicBool::new(false)).unwrap()
+    }
+
+    fn callers_of(m: &CodeManager, root: &Path, t: &CallTarget) -> CallersResult {
+        let req = CallersRequest { root: root.to_string_lossy().into(), at: None, target: Some(t.clone()), max_results: 1000 };
+        m.callers("w1", &req, &AtomicBool::new(false)).unwrap()
+    }
+
+    fn who(r: &CallersResult) -> Vec<String> {
+        r.callers.iter().map(|c| format!("{}.{}({})/{:?}", c.caller.owner, c.caller.name, c.caller.params, c.caller.kind)).collect()
+    }
+
+    #[test]
+    fn kotlin_call_chain_overloads_initializers_and_lambdas() {
+        if !kotlin_ready() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "C.kt", "package p\n\nclass C {\n    fun c() {}\n}\n");
+        write(r, "B.kt", "package p\n\nclass B(private val c: C) {\n    fun b() {\n        c.c()\n    }\n}\n");
+        write(r, "A.kt", "package p\n\nclass A(private val b: B) {\n    fun a() {\n        b.b()\n    }\n}\n");
+        write(
+            r,
+            "Ov.kt",
+            "package p\n\nclass Ov {\n    fun go(x: Int) { C().c() }\n    fun go(s: String) { C().c() }\n    val prop = C().c()\n    init {\n        C().c()\n    }\n    fun lam() {\n        listOf(1).forEach {\n            C().c()\n        }\n    }\n}\n",
+        );
+        let m = CodeManager::new();
+        // Callers of c: found from its declaration. A.a is not one of them.
+        let res = callers_at(&m, r, "C.kt", "c() {}", 0);
+        let t = res.target.clone().unwrap();
+        assert_eq!((t.owner.as_str(), t.name.as_str(), t.kind), ("p.C", "c", CallKind::Method));
+        let w = who(&res);
+        assert!(w.contains(&"p.B.b()/Method".to_string()), "{w:?}");
+        assert!(w.contains(&"p.Ov.go(x: Int)/Method".to_string()));
+        assert!(w.contains(&"p.Ov.go(s: String)/Method".to_string()), "overloads are separate callers");
+        assert!(w.contains(&"p.Ov.prop()/Property".to_string()), "a property initializer");
+        assert!(w.contains(&"p.Ov.Ov()/Initializer".to_string()), "init block: {w:?}");
+        assert!(w.contains(&"p.Ov.lam()/Method".to_string()), "a lambda belongs to its method");
+        assert!(!w.iter().any(|x| x.contains("p.A.")));
+        assert_eq!(res.callers.len(), 6 - 0 - 0 + 0 - 0, "{w:?}");
+        assert!(res.callers.windows(2).all(|p| (&p[0].caller.path, p[0].caller.line) <= (&p[1].caller.path, p[1].caller.line)));
+        let b = res.callers.iter().find(|c| c.caller.name == "b").unwrap();
+        assert_eq!(b.sites.len(), 1);
+        assert_eq!(b.sites[0].line, 5);
+        assert!(b.likely && !b.test);
+        // The next level: callers of b are a.
+        let up = callers_of(&m, r, &b.caller);
+        assert_eq!(who(&up), vec!["p.A.a()/Method"]);
+        assert_eq!(up.target.as_ref().unwrap().name, "b");
+        // Callers of a: none.
+        let a = callers_of(&m, r, &up.callers[0].caller);
+        assert!(a.callers.is_empty() && a.target.is_some());
+        // Constructor: the cursor is on a call of the type name.
+        let ctor = callers_at(&m, r, "Ov.kt", "C().c()", 0);
+        let t = ctor.target.clone().unwrap();
+        assert_eq!((t.kind, t.owner.as_str()), (CallKind::Constructor, "p.C"));
+        assert!(ctor.exact);
+        assert_eq!(ctor.callers.len(), 5, "{:?}", who(&ctor));
+        // No method at the position.
+        let none = callers_at(&m, r, "C.kt", "package", 2);
+        assert!(none.target.is_none());
+        // An initializer has no callers.
+        let init = ctor.callers.iter().find(|c| c.caller.kind == CallKind::Initializer).unwrap();
+        assert!(callers_of(&m, r, &init.caller).callers.is_empty());
+    }
+
+    #[test]
+    fn interface_method_called_through_the_interface() {
+        if !kotlin_ready() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        write(r, "Port.kt", "package p\n\ninterface Port {\n    fun send()\n}\n");
+        write(r, "Impl.kt", "package p\n\nclass Impl : Port {\n    override fun send() {}\n}\n");
+        write(r, "User.kt", "package p\n\nclass User(private val port: Port) {\n    fun use() {\n        port.send()\n    }\n}\n");
+        write(r, "src/test/kotlin/UserTest.kt", "package p\n\nclass UserTest {\n    fun t(p: Port) { p.send() }\n}\n");
+        let m = CodeManager::new();
+        let res = callers_at(&m, r, "Impl.kt", "send() {}", 0);
+        let w = who(&res);
+        assert_eq!(w, vec!["p.User.use()/Method", "p.UserTest.t(p: Port)/Method"], "{w:?}");
+        assert!(res.callers.iter().all(|c| c.likely));
+        assert!(res.callers[1].test && !res.callers[0].test);
+    }
+
+    #[test]
+    fn java_static_block_and_swift_extension() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        let m = CodeManager::new();
+        if java_ready() {
+            write(r, "p/C.java", "package p;\npublic class C {\n    public void c() {}\n}\n");
+            write(r, "p/J.java", "package p;\npublic class J {\n    static { new C().c(); }\n    void m() { new C().c(); }\n}\n");
+            let res = callers_at(&m, r, "p/C.java", "c() {}", 0);
+            let w = who(&res);
+            assert_eq!(w, vec!["p.J.J()/Initializer", "p.J.m()/Method"], "{w:?}");
+        }
+        if swift_ready() {
+            write(r, "S/Model.swift", "struct Model {\n    func a() {}\n}\nextension Model {\n    func b() {\n        a()\n    }\n}\n");
+            m.update(&r.to_string_lossy(), &[], true).unwrap();
+            let res = callers_at(&m, r, "S/Model.swift", "a() {}", 0);
+            assert_eq!(who(&res), vec!["Model.b()/Method"]);
+        }
+    }
+
+    #[test]
+    fn test_path_rule() {
+        let root = Path::new("/r");
+        let t = |p: &str| internals::is_test_path(root, Path::new(p));
+        assert!(t("/r/src/test/kotlin/A.kt"));
+        assert!(t("/r/app/androidTest/A.kt"));
+        assert!(t("/r/AppTests/A.swift"));
+        assert!(t("/r/src/main/FooTest.kt"));
+        assert!(t("/r/src/main/FooSpec.kt"));
+        assert!(t("/r/src/main/FooIT.java"));
+        assert!(!t("/r/src/main/Foo.kt"));
+        assert!(!t("/r/src/main/UNIT.kt"), "all upper case before IT is not a test");
+        assert!(!internals::is_test_path(Path::new("/test"), Path::new("/test/src/main/Foo.kt")), "the root itself does not count");
+    }
+
+    #[test]
+    fn members_without_end_line_use_the_next_member() {
+        // Two methods without end lines in a type that ends on line 12.
+        let mut t = ty("T", TypeKind::Class);
+        t.end_line = 12;
+        let mut m1 = method("one", None, vec![]);
+        m1.line = 2;
+        let mut m2 = method("two", None, vec![]);
+        m2.line = 6;
+        let mut f = field("prop", tr("Int"));
+        f.line = 10;
+        t.methods = vec![m1, m2];
+        t.fields = vec![f];
+        let i = index(vec![file("/p/T.kt", Lang::Kotlin, "p", vec![], vec![t])]);
+        let v = i.view();
+        let fe = i.file(0);
+        let at = |line: u32| {
+            let l = crate::callers::locate(&v, 0, &fe.model, Lang::Kotlin, "T.kt", line);
+            (l.name, l.kind)
+        };
+        assert_eq!(at(4), ("one".into(), CallKind::Method));
+        assert_eq!(at(5), ("one".into(), CallKind::Method));
+        assert_eq!(at(6), ("two".into(), CallKind::Method));
+        assert_eq!(at(9), ("two".into(), CallKind::Method));
+        assert_eq!(at(11), ("prop".into(), CallKind::Property));
+        // Before the first member: code of the type.
+        assert_eq!(at(1), ("T".into(), CallKind::Initializer));
+        // Outside every type: top-level code of the file.
+        assert_eq!(at(20), ("T.kt".into(), CallKind::Initializer));
+        // An end line that goes past the next member is cut there.
+        let mut t = ty("U", TypeKind::Class);
+        t.end_line = 12;
+        let mut m1 = method("one", None, vec![]);
+        m1.line = 2;
+        m1.end_line = 11;
+        let mut m2 = method("two", None, vec![]);
+        m2.line = 6;
+        m2.end_line = 8;
+        t.methods = vec![m1, m2];
+        let i = index(vec![file("/p/U.kt", Lang::Kotlin, "p", vec![], vec![t])]);
+        let v = i.view();
+        let l = crate::callers::locate(&v, 0, &i.file(0).model, Lang::Kotlin, "U.kt", 7);
+        assert_eq!(l.name, "two");
+        let l = crate::callers::locate(&v, 0, &i.file(0).model, Lang::Kotlin, "U.kt", 4);
+        assert_eq!(l.name, "one");
+        let l = crate::callers::locate(&v, 0, &i.file(0).model, Lang::Kotlin, "U.kt", 9);
+        assert_eq!(l.kind, CallKind::Initializer, "after `two` ends and before the type end");
+    }
+
+    #[test]
+    fn callers_json_matches_code_ts() {
+        let t = CallTarget { owner: "a.B".into(), name: "f".into(), kind: CallKind::Constructor, params: "x: Int".into(), path: "/p".into(), line: 1, column: 2, lang: CodeLang::Swift };
+        let r = CallersResult {
+            target: Some(t.clone()),
+            callers: vec![CallerNode { caller: t.clone(), sites: vec![CallSite { line: 1, column: 1, text: "x".into(), range: [0, 1] }], likely: true, test: false }],
+            exact: true,
+            truncated: false,
+            elapsed_ms: 1,
+        };
+        let j = serde_json::to_value(&r).unwrap();
+        assert_eq!(keys(&j), ["callers", "elapsedMs", "exact", "target", "truncated"]);
+        assert_eq!(keys(&j["target"]), ["column", "kind", "lang", "line", "name", "owner", "params", "path"]);
+        assert_eq!(j["target"]["kind"], "constructor");
+        assert_eq!(j["target"]["lang"], "swift");
+        assert_eq!(keys(&j["callers"][0]), ["caller", "likely", "sites", "test"]);
+        assert_eq!(keys(&j["callers"][0]["sites"][0]), ["column", "line", "range", "text"]);
+        let req: CallersRequest = serde_json::from_value(serde_json::json!({ "root": "/p", "target": serde_json::to_value(&t).unwrap(), "maxResults": 5 })).unwrap();
+        assert_eq!(req.target.unwrap(), t);
+        let req: CallersRequest = serde_json::from_value(serde_json::json!({ "root": "/p", "at": { "path": "/a", "line": 1, "column": 2 }, "maxResults": 5 })).unwrap();
+        assert!(req.at.is_some() && req.target.is_none());
     }
 
     #[test]

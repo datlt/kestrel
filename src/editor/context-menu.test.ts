@@ -20,6 +20,7 @@ function deps(commands: Record<string, Cmd>, over: Partial<MenuDeps> = {}) {
 const ALL: Record<string, Cmd> = {
   'lsp.gotoDefinition': { keybinding: 'F12' },
   'usages.find': { keybinding: 'Alt-F7' },
+  'callHierarchy.show': { keybinding: 'Mod-Shift-h' },
   'diagram.showForCursor': { keybinding: ['Mod-Alt-u', 'Mod-u'] },
   'lsp.rename': { keybinding: 'F2' },
   'lsp.format': { keybinding: 'Shift-Alt-f' },
@@ -30,12 +31,12 @@ describe('buildMenuItems', () => {
     const { d } = deps(ALL);
     const items = buildMenuItems(d);
     expect(items.map((i) => i.label)).toEqual([
-      'Go to Definition', 'Find Usages', 'Show Class Diagram', 'Rename Symbol', 'Format Document',
+      'Go to Definition', 'Find Usages', 'Show Call Hierarchy', 'Show Class Diagram', 'Rename Symbol', 'Format Document',
       'Cut', 'Copy', 'Paste', 'Select All',
     ]);
-    expect(items.map((i) => !!i.separatorBefore)).toEqual([false, false, false, false, false, true, false, false, false]);
+    expect(items.map((i) => !!i.separatorBefore)).toEqual([false, false, false, false, false, false, true, false, false, false]);
     expect(items[0]!.keybinding).toBe('F12');
-    expect(items[2]!.keybinding).toBe('Mod-Alt-u');
+    expect(items[3]!.keybinding).toBe('Mod-Alt-u');
   });
   it('skips commands that do not exist or whose when fails', () => {
     const { d } = deps({ 'usages.find': { keybinding: 'Alt-F7' }, 'lsp.rename': { when: () => false }, 'lsp.format': { when: () => true } });
@@ -63,8 +64,8 @@ describe('buildMenuItems', () => {
     const items = buildMenuItems(d);
     items[1]!.run();
     expect(execute).toHaveBeenCalledWith('usages.find');
-    items[5]!.run();
-    items[8]!.run();
+    items[6]!.run();
+    items[9]!.run();
     expect(clipboard.cut).toHaveBeenCalled();
     expect(clipboard.selectAll).toHaveBeenCalled();
   });

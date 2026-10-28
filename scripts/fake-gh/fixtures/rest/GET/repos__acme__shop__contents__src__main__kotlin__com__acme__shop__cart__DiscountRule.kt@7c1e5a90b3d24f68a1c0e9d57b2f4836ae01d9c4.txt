@@ -1,0 +1,19 @@
+package com.acme.shop.cart
+
+import com.acme.shop.money.Money
+
+/** A rule that takes money off a cart. */
+interface DiscountRule {
+    fun discountFor(items: List<CartItem>, subtotal: Money): Money
+}
+
+/** Takes a percent off when the subtotal reaches a minimum. */
+class PercentOverMinimum(
+    private val percent: Int,
+    private val minimum: Money,
+) : DiscountRule {
+    override fun discountFor(items: List<CartItem>, subtotal: Money): Money {
+        if (subtotal < minimum) return Money.ZERO
+        return subtotal * percent / 100
+    }
+}

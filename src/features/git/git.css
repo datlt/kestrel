@@ -32,6 +32,26 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.git-branch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.git-branch-btn:hover {
+  background: var(--hover);
+  border-color: var(--border);
+}
+.git-branch-btn svg {
+  color: var(--fg-muted);
+}
 .git-spacer {
   flex: 1;
 }

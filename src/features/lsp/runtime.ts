@@ -17,7 +17,7 @@ import { lintGutter, setDiagnostics } from '@codemirror/lint';
 import type { Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import type { AppContext } from '../../core/types';
-import { findReferences, referencesAt, renameSymbol, workspaceSymbols } from './actions';
+import { findReferences, incomingCalls, referencesAt, renameSymbol, workspaceSymbols } from './actions';
 import type { LspManager } from './manager';
 import type { Session } from './session';
 import { pathToUri } from './uri';
@@ -153,6 +153,7 @@ export const actions = {
   rename: (view: EditorView, ctx: AppContext): boolean => runAsync(view, () => renameSymbol(view, ctx)),
   format: (view: EditorView): boolean => formatDocument(view),
   referencesAt,
+  incomingCalls,
   workspaceSymbols,
 };
 

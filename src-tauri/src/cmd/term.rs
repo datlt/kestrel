@@ -6,7 +6,7 @@
 
 use super::{Handler, SetupResult};
 use kestrel_common::{Error, Result};
-use kestrel_term::{resolve_shell, Session, SpawnOptions};
+use kestrel_term::{resolve_shell, zsh, Session, SpawnOptions};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -54,8 +54,27 @@ fn find_session(state: &TermState, label: &str, id: u64) -> Result<Arc<Session>>
         .ok_or_else(|| Error::not_found(format!("terminal {id} is not running")))
 }
 
+/// The folder with the zsh startup files of Kestrel (in the app cache folder). It
+/// returns `None` when zsh should not get them: the setting is off, the shell is
+/// not zsh, or the files cannot be written. The shell must start in every case.
+fn zsh_integration_dir(app: &AppHandle, program: &str, highlight: bool) -> Option<PathBuf> {
+    if !highlight || !zsh::is_zsh(program) {
+        return None;
+    }
+    let dir = app.path().app_cache_dir().ok()?.join("shell-integration").join("zsh");
+    match zsh::install(&dir) {
+        Ok(()) => Some(dir),
+        Err(e) => {
+            log::warn!("cannot write the zsh files for the terminal colors in {}: {e}", dir.display());
+            None
+        }
+    }
+}
+
 /// Starts a shell in `cwd`. Output arrives in `channel` as raw byte batches.
 /// `events` gets `{ kind: "exit", code }` when the shell ends.
+/// `highlight` is the setting `terminal.highlightCommands` (default true): zsh
+/// gets the command line colors.
 #[tauri::command]
 async fn term_spawn(
     window: Window,
@@ -64,6 +83,7 @@ async fn term_spawn(
     cols: u16,
     rows: u16,
     shell: Option<String>,
+    highlight: Option<bool>,
     channel: Channel<InvokeResponseBody>,
     events: Channel<TermEvent>,
 ) -> Result<SpawnResult> {
@@ -85,6 +105,7 @@ async fn term_spawn(
             .or_else(|| std::env::var("SHELL").ok());
         let command = resolve_shell(shell.as_deref(), env_shell.as_deref());
         let shell_name = command.program.clone();
+        let zsh_dir = zsh_integration_dir(&app, &command.program, highlight.unwrap_or(true));
 
         let mut dir = PathBuf::from(&cwd);
         if !dir.is_dir() {
@@ -93,7 +114,7 @@ async fn term_spawn(
 
         let exit_label = label.clone();
         let session = Session::spawn(
-            SpawnOptions { command, cwd: dir, cols, rows, env },
+            SpawnOptions { command, cwd: dir, cols, rows, env, zsh_dir },
             move |bytes| {
                 // The send fails when the page is gone. The window cleanup kills the shell then.
                 let _ = channel.send(InvokeResponseBody::Raw(bytes));

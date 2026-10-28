@@ -1,0 +1,83 @@
+{
+  "data": {
+    "viewer": {
+      "login": "octo-fake"
+    },
+    "search": {
+      "issueCount": 2,
+      "nodes": [
+        {
+          "number": 101,
+          "title": "Add discount rules to the cart",
+          "url": "https://github.example.test/acme/shop/pull/101",
+          "isDraft": false,
+          "updatedAt": "2026-10-27T16:20:00Z",
+          "author": {
+            "login": "mira-dev"
+          },
+          "repository": {
+            "nameWithOwner": "acme/shop"
+          },
+          "headRefName": "feature/cart-discounts",
+          "baseRefName": "main",
+          "reviewDecision": "CHANGES_REQUESTED",
+          "latestReviews": {
+            "nodes": [
+              {
+                "state": "CHANGES_REQUESTED",
+                "author": {
+                  "login": "bob-reviewer"
+                }
+              }
+            ]
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "PENDING"
+                  }
+                }
+              }
+            ]
+          },
+          "additions": 63,
+          "deletions": 10
+        },
+        {
+          "number": 58,
+          "title": "Retry failed payment callbacks",
+          "url": "https://github.example.test/acme/payments-api/pull/58",
+          "isDraft": false,
+          "updatedAt": "2026-10-26T09:05:00Z",
+          "author": {
+            "login": "kenji-w"
+          },
+          "repository": {
+            "nameWithOwner": "acme/payments-api"
+          },
+          "headRefName": "fix/callback-retry",
+          "baseRefName": "main",
+          "reviewDecision": "REVIEW_REQUIRED",
+          "latestReviews": {
+            "nodes": []
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "SUCCESS"
+                  }
+                }
+              }
+            ]
+          },
+          "additions": 120,
+          "deletions": 34
+        }
+      ]
+    }
+  }
+}

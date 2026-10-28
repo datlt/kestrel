@@ -26,6 +26,8 @@ fn main() {
     let r1 = rss_mb();
     let model_bytes: usize = index.files.iter().map(|f| f.model.bytes()).sum();
     let types: usize = index.type_count;
+    let word_bytes: usize = index.files.iter().map(|f| f.words.len() * 4).sum();
+    println!("word hashes: {:.1} MB ({} per file)", word_bytes as f64 / 1048576.0, word_bytes / 4 / index.files.len().max(1));
     println!("files {} types {} build {:?}", index.files.len(), types, build);
     println!("rss before {r0:.0} MB, after {r1:.0} MB (+{:.0}), models estimated {:.1} MB", r1 - r0, model_bytes as f64 / 1048576.0);
     let t = Instant::now();
@@ -114,6 +116,39 @@ fn main() {
             if let Some(mm) = t.methods.iter().find(|x| x.name == common.0) {
                 usage(&f.path, mm.line, mm.column, &format!("method `{}` ({} declarations)", common.0, common.1));
                 break 'find;
+            }
+        }
+    }
+    // Callers: the methods of the most used *Service type, then up two levels.
+    let svc = (0..n as u32).filter(|&i| v.decl(i).name.ends_with("Service") && !v.decl(i).methods.is_empty()).max_by_key(|&i| rev.incoming(i).len());
+    if let Some(svc) = svc {
+        let d = v.decl(svc);
+        let fe = v.file_of(svc);
+        println!("callers: service {} ({} incoming)", v.node(svc).qname, rev.incoming(svc).len());
+        let ask = |at: Option<CallAt>, target: Option<CallTarget>| {
+            let req = CallersRequest { root: root_s.clone(), at, target, max_results: 1000 };
+            let t = Instant::now();
+            let res = m.callers("w", &req, &cancel).unwrap();
+            (t.elapsed(), res)
+        };
+        let mut best: Option<(usize, CallersResult)> = None;
+        let mut total = std::time::Duration::ZERO;
+        for mm in d.methods.iter().filter(|x| x.kind == kestrel_lang::MemberKind::Method).take(12) {
+            let (el, res) = ask(Some(CallAt { path: fe.path.to_string_lossy().into(), line: mm.line, column: mm.column, text: None }), None);
+            total += el;
+            let sites: usize = res.callers.iter().map(|c| c.sites.len()).sum();
+            if best.as_ref().is_none_or(|b| sites > b.0) {
+                best = Some((sites, res));
+            }
+        }
+        println!("callers: 12 methods asked in {total:?}");
+        if let Some((sites, res)) = best {
+            println!("callers level 1 of {:?}: {} callers, {} sites, truncated {}, exact {}", res.target.as_ref().map(|t| t.name.clone()), res.callers.len(), sites, res.truncated, res.exact);
+            let (el, again) = ask(None, res.target.clone());
+            println!("callers level 1 again by target: {el:?} ({} callers)", again.callers.len());
+            for c in res.callers.iter().take(5) {
+                let (el, up) = ask(None, Some(c.caller.clone()));
+                println!("  level 2 {}.{}: {el:?}, {} callers", c.caller.owner, c.caller.name, up.callers.len());
             }
         }
     }

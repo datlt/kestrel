@@ -1,0 +1,51 @@
+{
+  "data": {
+    "viewer": {
+      "login": "octo-fake"
+    },
+    "search": {
+      "issueCount": 1,
+      "nodes": [
+        {
+          "number": 99,
+          "title": "Cache the product price list",
+          "url": "https://github.example.test/acme/shop/pull/99",
+          "isDraft": true,
+          "updatedAt": "2026-10-25T11:40:00Z",
+          "author": {
+            "login": "octo-fake"
+          },
+          "repository": {
+            "nameWithOwner": "acme/shop"
+          },
+          "headRefName": "perf/price-cache",
+          "baseRefName": "main",
+          "reviewDecision": "APPROVED",
+          "latestReviews": {
+            "nodes": [
+              {
+                "state": "APPROVED",
+                "author": {
+                  "login": "mira-dev"
+                }
+              }
+            ]
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "SUCCESS"
+                  }
+                }
+              }
+            ]
+          },
+          "additions": 41,
+          "deletions": 7
+        }
+      ]
+    }
+  }
+}

@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   'terminal.fontSize': 0,
   'terminal.scrollback': 10000,
   'terminal.cursorBlink': true,
+  'terminal.highlightCommands': true,
 };
 
 /** JSON with // and /* comments and trailing commas (like VS Code settings). */

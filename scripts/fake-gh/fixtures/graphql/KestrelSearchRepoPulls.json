@@ -1,0 +1,90 @@
+{
+  "data": {
+    "viewer": {
+      "login": "octo-fake"
+    },
+    "search": {
+      "issueCount": 2,
+      "nodes": [
+        {
+          "number": 101,
+          "title": "Add discount rules to the cart",
+          "url": "https://github.example.test/acme/shop/pull/101",
+          "isDraft": false,
+          "updatedAt": "2026-10-27T16:20:00Z",
+          "author": {
+            "login": "mira-dev"
+          },
+          "repository": {
+            "nameWithOwner": "acme/shop"
+          },
+          "headRefName": "feature/cart-discounts",
+          "baseRefName": "main",
+          "reviewDecision": "CHANGES_REQUESTED",
+          "latestReviews": {
+            "nodes": [
+              {
+                "state": "CHANGES_REQUESTED",
+                "author": {
+                  "login": "bob-reviewer"
+                }
+              }
+            ]
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "PENDING"
+                  }
+                }
+              }
+            ]
+          },
+          "additions": 63,
+          "deletions": 10
+        },
+        {
+          "number": 99,
+          "title": "Cache the product price list",
+          "url": "https://github.example.test/acme/shop/pull/99",
+          "isDraft": true,
+          "updatedAt": "2026-10-25T11:40:00Z",
+          "author": {
+            "login": "octo-fake"
+          },
+          "repository": {
+            "nameWithOwner": "acme/shop"
+          },
+          "headRefName": "perf/price-cache",
+          "baseRefName": "main",
+          "reviewDecision": "APPROVED",
+          "latestReviews": {
+            "nodes": [
+              {
+                "state": "APPROVED",
+                "author": {
+                  "login": "mira-dev"
+                }
+              }
+            ]
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "SUCCESS"
+                  }
+                }
+              }
+            ]
+          },
+          "additions": 41,
+          "deletions": 7
+        }
+      ]
+    }
+  }
+}

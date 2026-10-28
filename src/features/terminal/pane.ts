@@ -8,8 +8,10 @@ import { h } from '../../core/dom';
 import { isMac } from '../../core/util';
 import type { Settings } from '../../core/types';
 import { termKill, termResize, termSpawn, termWrite, type TermSession } from '../../ipc/term';
+import { attachIme, isImeKey, type ImeHandle } from './ime';
 import { clipboardAction, isClosingKey, routeKey } from './keys';
-import { fontFamilyFor, themeFromDocument } from './theme';
+import { readyDelay } from './run';
+import { MINIMUM_CONTRAST_RATIO, fontFamilyFor, themeFromDocument } from './theme';
 import { loadXterm } from './xterm-loader';
 
 export interface PaneDeps {
@@ -25,6 +27,14 @@ export interface PaneDeps {
   onContextMenu(pane: TerminalPane, e: MouseEvent): void;
   /** Shows an error to the user. */
   onError(message: string): void;
+}
+
+/** What a pane starts with. Everything is optional. */
+export interface PaneInit {
+  /** Folder for the shell. Missing: the folder of the workspace. */
+  cwd?: string;
+  /** A line to run when the shell is ready (`terminal.run`). */
+  command?: string;
 }
 
 export function terminalFontSize(s: Readonly<Settings>): number {
@@ -65,11 +75,23 @@ export class TerminalPane {
   private pendingInput: string[] = [];
   private disposed = false;
   private _exited = false;
+  private ime: ImeHandle | null = null;
+  /** True after the user typed in this pane (not the command of `terminal.run`). */
+  private _typed = false;
+
+  // The command of `terminal.run`, and what we know about the output of the new shell.
+  private runCommand: string | null;
+  private runStart = 0;
+  private firstOutputAt: number | null = null;
+  private lastOutputAt: number | null = null;
+  private runTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly id: string,
     private deps: PaneDeps,
+    private init: PaneInit = {},
   ) {
+    this.runCommand = init.command ?? null;
     this.screen = h('div', { class: 'term-screen' });
     this.searchInput = h('input', {
       class: 'term-search-input',
@@ -99,7 +121,8 @@ export class TerminalPane {
     });
     this.searchInput.addEventListener('input', () => this.find(true, true));
     this.searchInput.addEventListener('keydown', (e) => {
-      if (e.isComposing) return;
+      // WebKit sends the Enter that confirms a conversion with keyCode 229 and isComposing false.
+      if (isImeKey(e)) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         this.findStep(!e.shiftKey);
@@ -112,6 +135,11 @@ export class TerminalPane {
 
   get exited(): boolean {
     return this._exited;
+  }
+
+  /** True after the user typed in this pane. */
+  get typed(): boolean {
+    return this._typed;
   }
 
   /** Loads xterm, opens the screen and starts the shell. Call it after `el` is in the page. */
@@ -133,6 +161,9 @@ export class TerminalPane {
       fontSize: terminalFontSize(s),
       scrollback: Math.max(0, s['terminal.scrollback']),
       theme: themeFromDocument(),
+      // xterm moves a color that is hard to read (dark blue on black) until it
+      // reaches this contrast. The ANSI palettes in theme.ts already pass it.
+      minimumContrastRatio: MINIMUM_CONTRAST_RATIO,
       macOptionClickForcesSelection: true,
     });
     this.term = term;
@@ -151,6 +182,9 @@ export class TerminalPane {
 
     term.attachCustomKeyEventHandler((e) => this.handleKey(e));
     term.open(this.screen);
+    // Input methods (Japanese, Vietnamese ...). This must come after `open`: it
+    // needs the helper textarea of xterm. See ime.ts for what it does.
+    this.ime = attachIme(term, (text) => term.input(text, true));
 
     // WebGL is faster. When the browser has no WebGL, or it fails later, xterm
     // keeps using its DOM renderer.
@@ -162,7 +196,10 @@ export class TerminalPane {
       console.warn('[terminal] WebGL is not available, using the DOM renderer', e);
     }
 
-    term.onData((data) => this.send(data));
+    term.onData((data) => {
+      this._typed = true;
+      this.send(data);
+    });
     term.onResize(({ cols, rows }) => {
       if (this.session) void termResize(this.session.id, cols, rows).catch(() => {});
     });
@@ -174,9 +211,19 @@ export class TerminalPane {
 
     try {
       const session = await termSpawn(
-        { cwd: await this.deps.cwd(), cols: term.cols, rows: term.rows, shell: s['terminal.shell'] },
+        {
+          cwd: this.init.cwd || (await this.deps.cwd()),
+          cols: term.cols,
+          rows: term.rows,
+          shell: s['terminal.shell'],
+          highlight: s['terminal.highlightCommands'] !== false,
+        },
         (bytes) => {
-          if (!this.disposed) term.write(bytes);
+          if (this.disposed) return;
+          // `bytes` is a Uint8Array. xterm decodes UTF-8 as a stream, so a character
+          // that is cut between two batches is put together again.
+          term.write(bytes);
+          this.noteOutput();
         },
         (code) => this.handleExit(code),
       );
@@ -189,11 +236,40 @@ export class TerminalPane {
       void termResize(session.id, term.cols, term.rows).catch(() => {});
       this.writeBuf += this.pendingInput.splice(0).join('');
       void this.flushWrites();
+      this.runStart = performance.now();
+      this.armRun();
     } catch (e) {
       this._exited = true;
       const msg = e instanceof Error ? e.message : String(e);
       term.write(`\r\n\x1b[31m[Cannot start the shell: ${msg}]\x1b[0m\r\n`);
     }
+  }
+
+  private noteOutput(): void {
+    const now = performance.now();
+    this.firstOutputAt ??= now;
+    this.lastOutputAt = now;
+    if (this.runCommand && this.session) this.armRun();
+  }
+
+  /**
+   * Sends the command of `terminal.run` when the shell is ready: after the first
+   * output (the prompt) and a short quiet time, at the latest 1 second after the
+   * shell started. Input that comes too early waits in the terminal driver, so a
+   * late start is not a problem.
+   */
+  private armRun(): void {
+    if (!this.runCommand || this.disposed) return;
+    if (this.runTimer) clearTimeout(this.runTimer);
+    this.runTimer = null;
+    const wait = readyDelay(this.runStart, this.firstOutputAt, this.lastOutputAt, performance.now());
+    if (wait > 0) {
+      this.runTimer = setTimeout(() => this.armRun(), wait);
+      return;
+    }
+    const line = this.runCommand;
+    this.runCommand = null;
+    this.send(`${line}\r`);
   }
 
   private send(data: string): void {
@@ -230,6 +306,10 @@ export class TerminalPane {
   }
 
   private handleKey(e: KeyboardEvent): boolean {
+    // A key of an input method (composition, keyCode 229) goes to xterm untouched: no
+    // app shortcut, no copy and paste, no "close the pane". ime.ts stops these events
+    // before they reach xterm, so this line is the second guard.
+    if (isImeKey(e) || this.ime?.composing) return true;
     const route = routeKey(e, isMac);
     if (route === 'search') {
       if (e.type === 'keydown') {
@@ -251,8 +331,8 @@ export class TerminalPane {
     }
     if (route === 'app') return false;
     if (this._exited) {
-      // IME composition sends keyCode 229. It must not close the pane.
-      if (!e.isComposing && e.keyCode !== 229 && isClosingKey(e)) {
+      // isClosingKey skips the keys of an input method.
+      if (isClosingKey(e)) {
         e.preventDefault();
         this.deps.onCloseRequest(this);
       }
@@ -309,6 +389,7 @@ export class TerminalPane {
     if (this.el.clientWidth < 20 || this.el.clientHeight < 20) return;
     try {
       this.fitAddon.fit();
+      this.ime?.sync();
     } catch {
       // The renderer is not ready yet. The next resize fits again.
     }
@@ -341,10 +422,14 @@ export class TerminalPane {
     term.options.scrollback = Math.max(0, s['terminal.scrollback']);
     term.options.cursorBlink = s['terminal.cursorBlink'];
     this.scheduleFit();
+    // A new font size changes the cell size. The textarea of the input method must follow.
+    this.ime?.sync();
   }
 
   applyTheme(): void {
-    if (this.term) this.term.options.theme = themeFromDocument();
+    if (!this.term) return;
+    this.term.options.theme = themeFromDocument();
+    this.term.options.minimumContrastRatio = MINIMUM_CONTRAST_RATIO;
   }
 
   // --- Search --------------------------------------------------------------
@@ -410,6 +495,9 @@ export class TerminalPane {
     if (this.disposed) return;
     this.disposed = true;
     if (this.fitFrame) cancelAnimationFrame(this.fitFrame);
+    if (this.runTimer) clearTimeout(this.runTimer);
+    this.ime?.dispose();
+    this.ime = null;
     this.observer?.disconnect();
     if (this.session) void termKill(this.session.id).catch(() => {});
     try {

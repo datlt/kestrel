@@ -17,6 +17,14 @@ async fn md_render(text: String) -> Result<String> {
         .map_err(|e| kestrel_common::Error::internal(e.to_string()))
 }
 
+/// Renders markdown from other people (pull request comments) without raw HTML.
+#[tauri::command]
+async fn md_render_safe(text: String) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || kestrel_markdown::render_safe(&text))
+        .await
+        .map_err(|e| kestrel_common::Error::internal(e.to_string()))
+}
+
 /// Lets the protocol serve files in the folder of `path`. The image viewer calls
 /// it for images that are outside the open folder. One call per folder and
 /// window session is enough, so the list below stops repeated counting.
@@ -63,7 +71,7 @@ fn preview_drop_live(id: String) {
 }
 
 pub fn handler() -> Handler {
-    Box::new(tauri::generate_handler![md_render, preview_allow_parent, preview_set_live, preview_drop_live])
+    Box::new(tauri::generate_handler![md_render, md_render_safe, preview_allow_parent, preview_set_live, preview_drop_live])
 }
 
 /// Registers the `preview://` URI scheme on the builder.

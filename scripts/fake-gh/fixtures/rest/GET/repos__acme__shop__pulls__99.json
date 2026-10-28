@@ -1,0 +1,38 @@
+{
+  "number": 99,
+  "title": "Cache the product price list",
+  "body": "Keeps the price list in memory for one minute.",
+  "state": "open",
+  "draft": true,
+  "merged": false,
+  "mergeable_state": "clean",
+  "user": {
+    "login": "octo-fake",
+    "type": "User"
+  },
+  "head": {
+    "ref": "perf/price-cache",
+    "sha": "9d3f6b12a4e87c05b1d2f9a63e0c48b7152da6f0",
+    "repo": {
+      "full_name": "acme/shop"
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "5a0c7e93f1b24d68c3a9e05f7d1b82c64e03a9d7",
+    "repo": {
+      "full_name": "acme/shop"
+    }
+  },
+  "html_url": "https://github.example.test/acme/shop/pull/99",
+  "labels": [],
+  "requested_reviewers": [
+    {
+      "login": "mira-dev",
+      "type": "User"
+    }
+  ],
+  "requested_teams": [],
+  "created_at": "2026-10-22T10:00:00Z",
+  "updated_at": "2026-10-25T11:40:00Z"
+}

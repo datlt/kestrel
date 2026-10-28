@@ -1,0 +1,536 @@
+/* Review diff. The look of the code follows src/features/git/git.css (.git-diff). */
+.review-diff {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+  --review-diff-code-size: var(--review-diff-font-size, var(--editor-font-size));
+}
+.review-diff-message {
+  padding: 24px;
+  color: var(--fg-muted);
+}
+.review-diff-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.review-diff-body > .cm-editor {
+  height: 100%;
+}
+.review-diff-body .cm-scroller {
+  overflow: auto;
+}
+.review-diff .cm-mergeView {
+  height: 100%;
+  overflow: auto;
+}
+.review-diff .cm-mergeView .cm-editor {
+  height: auto;
+}
+.review-diff .cm-mergeView .cm-scroller {
+  overflow: visible;
+}
+.review-diff .cm-editor {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--review-diff-code-size);
+  line-height: var(--editor-line-height);
+}
+.review-diff .cm-editor.cm-focused {
+  outline: none;
+}
+.review-diff .cm-gutters {
+  background: var(--bg-alt);
+  color: var(--fg-faint);
+  border: 0;
+}
+.review-diff .cm-content {
+  caret-color: transparent;
+}
+.review-diff .cm-selectionBackground,
+.review-diff .cm-focused .cm-selectionBackground {
+  background: var(--selection);
+}
+.review-diff .cm-activeLine {
+  background: var(--hover);
+}
+.review-diff .cm-changedLine {
+  background: var(--diff-added-bg);
+}
+.review-diff .cm-merge-a .cm-changedLine,
+.review-diff .cm-deletedChunk,
+.review-diff .cm-deletedLine {
+  background: var(--diff-removed-bg);
+}
+.review-diff .cm-changedText,
+.review-diff .cm-insertedLine .cm-changedText {
+  background: var(--diff-added-strong);
+}
+.review-diff .cm-merge-a .cm-changedText,
+.review-diff .cm-deletedText {
+  background: var(--diff-removed-strong);
+}
+.review-diff .cm-changedLineGutter,
+.review-diff .cm-merge-b .cm-changedLineGutter {
+  background: var(--git-added);
+}
+.review-diff .cm-merge-a .cm-changedLineGutter,
+.review-diff .cm-deletedLineGutter {
+  background: var(--git-deleted);
+}
+.review-diff .cm-editor .cm-scroller .cm-collapsedLines {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 2px 0;
+  padding: 3px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-ui, inherit);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--accent);
+  background: var(--bg-alt);
+  background-image: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.review-diff .cm-editor .cm-scroller .cm-collapsedLines:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.review-diff .cm-editor .cm-scroller .cm-collapsedLines::before {
+  content: '';
+  margin: 0;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+.review-diff .cm-editor .cm-scroller .cm-collapsedLines::after {
+  content: none;
+}
+.review-diff .cm-mergeSpacer {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 5px,
+    color-mix(in srgb, var(--fg-faint) 28%, transparent) 5px,
+    color-mix(in srgb, var(--fg-faint) 28%, transparent) 6px
+  );
+  background-color: color-mix(in srgb, var(--fg-faint) 6%, transparent);
+}
+.review-diff .review-diff-line-add {
+  background: var(--diff-added-bg);
+}
+.review-diff .review-diff-line-del {
+  background: var(--diff-removed-bg);
+}
+.review-diff .cm-merge-a .cm-changedText,
+.review-diff .cm-merge-b .cm-changedText {
+  background-image: none;
+}
+/* A file that was added or deleted: every line has the change color. */
+.review-diff-only-add .cm-line {
+  background: var(--diff-added-bg);
+}
+.review-diff-only-del .cm-line {
+  background: var(--diff-removed-bg);
+}
+.review-diff-only-add .cm-gutterElement,
+.review-diff-only-del .cm-gutterElement {
+  background: transparent;
+}
+
+/* Lines of a multi-line comment, the drag, and the flash after reveal. */
+.review-diff .cm-line.review-diff-range {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.review-diff .cm-line.review-diff-range-drag {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.review-diff .cm-line.review-diff-flash,
+.review-diff .cm-deletedLine.review-diff-flash {
+  animation: review-diff-flash 1.6s ease-out;
+}
+@keyframes review-diff-flash {
+  0%,
+  40% {
+    background: color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+}
+.review-diff-dragging {
+  user-select: none;
+  cursor: row-resize;
+}
+
+/* "+" gutter. */
+.review-diff-plus-gutter {
+  width: 18px;
+}
+.review-diff-plus-gutter .cm-gutterElement {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.review-diff-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  line-height: 1;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  user-select: none;
+}
+.review-diff-plus-on,
+.cm-gutterElement:hover > .review-diff-plus,
+.cm-deletedLine:hover .review-diff-plus {
+  opacity: 1;
+}
+/* Old line number and "+" inside the deleted block of the unified layout. */
+.review-diff .cm-deletedLine {
+  position: relative;
+}
+.review-diff-oldnum {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  width: var(--review-diff-gutter-w, 60px);
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 6px 0 2px;
+  background: var(--bg-alt);
+  color: var(--fg-faint);
+  font-style: normal;
+  text-decoration: none;
+}
+.review-diff-oldnum .review-diff-plus {
+  flex: none;
+  margin-right: auto;
+}
+.review-diff-oldnum-text {
+  margin-left: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Threads and boxes (block widgets inside the editor). */
+.review-diff-slot {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-ui);
+  line-height: 1.45;
+  padding: 6px 12px 8px 20px;
+  background: var(--bg);
+  /* As wide as the visible pane, and fixed at the left while the code scrolls sideways. */
+  position: sticky;
+  left: var(--review-diff-gutter-w, 0px);
+  box-sizing: border-box;
+  width: var(--review-diff-pane-w, 100%);
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: default;
+  user-select: text;
+}
+.review-diff-ghost {
+  background: color-mix(in srgb, var(--fg-faint) 6%, transparent);
+}
+.review-diff-thread,
+.review-diff-box {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  max-width: 860px;
+  min-width: 0;
+  overflow: hidden;
+}
+.review-diff-box {
+  padding: 8px 10px;
+}
+.review-diff-box-title {
+  color: var(--fg-muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.review-diff-comment {
+  padding: 8px 10px;
+}
+.review-diff-comment + .review-diff-comment {
+  border-top: 1px solid var(--border);
+}
+.review-diff-comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-height: 20px;
+}
+.review-diff-author {
+  font-weight: 700;
+}
+.review-diff-time {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.review-diff-spacer {
+  flex: 1;
+}
+.review-diff-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+.review-diff-comment-meta .review-diff-tag {
+  margin-left: 0;
+}
+.review-diff-tag-pending {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.review-diff-location {
+  padding: 6px 10px 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.review-diff-link {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.review-diff-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.review-diff-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.review-diff-link-danger {
+  color: var(--danger);
+}
+.review-diff-md {
+  overflow-wrap: anywhere;
+}
+.review-diff-md-plain {
+  white-space: pre-wrap;
+  color: var(--fg-muted);
+}
+.review-diff-md > :first-child {
+  margin-top: 0;
+}
+.review-diff-md > :last-child {
+  margin-bottom: 0;
+}
+.review-diff-md pre {
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre;
+  overflow-wrap: normal;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-alt);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.review-diff-md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.review-diff-md img {
+  max-width: 100%;
+}
+.review-diff-md blockquote {
+  margin: 4px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+.review-diff-md a {
+  color: var(--accent);
+}
+.review-diff-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.review-diff-fold:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.review-diff-thread-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.review-diff-reply-open {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+.review-diff-reply-open:hover {
+  border-color: var(--accent);
+}
+.review-diff-reply-host {
+  padding: 0 10px 8px;
+}
+.review-diff-resolve {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Comment box. */
+.review-diff-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 60px;
+  max-height: 400px;
+  resize: none;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+.review-diff-textarea:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+.review-diff-textarea:disabled {
+  opacity: 0.6;
+}
+.review-diff-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.review-diff-actions .review-diff-spinner {
+  margin-right: 4px;
+}
+.review-diff-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.review-diff-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.review-diff-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.review-diff-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.review-diff-btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+.review-diff-error,
+.review-diff-error-inline {
+  color: var(--danger);
+  font-size: 12px;
+}
+.review-diff-error {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.review-diff-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: review-diff-spin 0.7s linear infinite;
+}
+.review-diff-spinner[hidden] {
+  display: none;
+}
+@keyframes review-diff-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* List of outdated comments above the diff. */
+.review-diff-outdated {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  max-height: 40%;
+  overflow: auto;
+}
+.review-diff-outdated-btn {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.review-diff-outdated-btn:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+.review-diff-outdated-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 10px;
+}

@@ -113,6 +113,31 @@ fn corpus() {
     let h = find_identifiers(Lang::Swift, &big, "self");
     let b = start.elapsed().as_secs_f64();
     println!("5 MB file: parse {a:.3}s ({} types), find_identifiers {b:.3}s ({} hits)", m.types.len(), h.len());
+    // Every member has end_line >= line and stays inside its type.
+    let mut checked = 0usize;
+    let mut bad = 0usize;
+    for (path, text) in &texts {
+        let m = parse(Lang::Swift, text);
+        for t in &m.types {
+            for x in t.fields.iter().chain(&t.methods) {
+                checked += 1;
+                if x.end_line < x.line || x.end_line < t.start_line || x.end_line > t.end_line.max(t.line) {
+                    bad += 1;
+                    if bad <= 10 {
+                        println!("bad end_line: {}.{} {}..{} in type {}..{} {}", t.name, x.name, x.line, x.end_line, t.start_line, t.end_line, path.display());
+                    }
+                }
+            }
+        }
+        for x in &m.top_level {
+            checked += 1;
+            if x.end_line < x.line {
+                bad += 1;
+            }
+        }
+    }
+    println!("members checked for end_line: {checked}, bad: {bad}");
+    assert_eq!(bad, 0);
     // Parse only, for the speed of `parse` alone.
     let start = Instant::now();
     for (_, text) in &texts {

@@ -3,6 +3,8 @@
 // from the Kestrel code index (see controller.ts).
 import type { AppContext } from '../../core/types';
 import { initEditorContextMenu } from '../../editor/context-menu';
+import { CallHierarchyController } from './call-controller';
+import { createCallHierarchyView } from './call-view';
 import { UsagesController, cursorRequest, type SearchRequest } from './controller';
 import { createUsagesView } from './view';
 
@@ -16,6 +18,8 @@ function requestFromArgument(arg: unknown): SearchRequest | null {
 export function initUsages(ctx: AppContext): void {
   const controller = new UsagesController(ctx);
   ctx.views.register(createUsagesView(ctx, controller));
+  const calls = new CallHierarchyController(ctx);
+  ctx.views.register(createCallHierarchyView(ctx, calls));
 
   const category = 'Go';
   ctx.commands.registerMany([
@@ -50,6 +54,21 @@ export function initUsages(ctx: AppContext): void {
       when: () => controller.hasResult(),
       run: () => controller.step(-1),
     },
+    {
+      id: 'callHierarchy.show',
+      title: 'Show Call Hierarchy',
+      category,
+      keybinding: 'Mod-Shift-h',
+      // The argument `{ path, line, column }` is optional. Without it the cursor is used.
+      run: async (arg?: unknown) => {
+        const req = requestFromArgument(arg) ?? cursorRequest(ctx);
+        if (!req) {
+          ctx.ui.notify('Open a file and put the cursor on a method first.');
+          return;
+        }
+        await calls.show(req);
+      },
+    },
   ]);
 
   // The right-click menu of file editors lives in src/editor/context-menu.ts.
@@ -58,5 +77,6 @@ export function initUsages(ctx: AppContext): void {
   ctx.bus.on('workbench:disposing', () => {
     menu.dispose();
     controller.dispose();
+    calls.dispose();
   });
 }

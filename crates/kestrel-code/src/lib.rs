@@ -4,6 +4,7 @@
 //!
 //! Use `CodeManager`: it keeps one index per root, shared by the windows.
 
+mod callers;
 mod cmodel;
 mod derived;
 mod diagram;
@@ -25,6 +26,7 @@ pub mod internals {
     pub use crate::diagram::run as run_diagram;
     pub use crate::index::*;
     pub use crate::textutil::*;
+    pub use crate::callers::{is_test_path, run as run_callers};
     pub use crate::usages::run as run_usages;
     pub use crate::walk::*;
 }

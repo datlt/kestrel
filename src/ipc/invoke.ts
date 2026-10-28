@@ -20,7 +20,10 @@ export type ErrorCode =
   | 'db_connect'
   | 'db_busy'
   | 'db_lost'
-  | 'db_auth';
+  | 'db_auth'
+  | 'gh_missing'
+  | 'gh_auth'
+  | 'gh_error';
 
 export class IpcError extends Error {
   constructor(

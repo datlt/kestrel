@@ -1,0 +1,3 @@
+# Discounts
+
+Discounts are not supported yet.

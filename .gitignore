@@ -9,3 +9,7 @@ src-tauri/gen/schemas/
 # Newest local app build (npm run app)
 /Kestrel.app
 /Kestrel.app.new
+
+# Logs of the fake gh program (scripts/fake-gh)
+scripts/fake-gh/fixtures/writes.log
+scripts/fake-gh/fixtures/gh.log

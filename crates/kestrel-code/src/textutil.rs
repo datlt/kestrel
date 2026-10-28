@@ -128,6 +128,50 @@ pub fn show_match(text: &str, line_no: u32, line_start: usize, start: usize, end
     Shown { line: line_no, text: line[begin..stop].to_owned(), range: [s16, e16], offset }
 }
 
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
+}
+
+/// FNV-1a hash of one word.
+pub fn word_hash(word: &[u8]) -> u32 {
+    let mut h: u32 = 2166136261;
+    for &b in word {
+        h = (h ^ b as u32).wrapping_mul(16777619);
+    }
+    h
+}
+
+/// Sorted, unique hashes of all words in the bytes (comments and strings
+/// included). The search uses it to skip files that cannot hold a name.
+pub fn word_hashes(bytes: &[u8]) -> Box<[u32]> {
+    let mut v: Vec<u32> = Vec::with_capacity(bytes.len() / 16);
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_word_byte(bytes[i]) {
+            let s = i;
+            let mut h: u32 = 2166136261;
+            while i < bytes.len() && is_word_byte(bytes[i]) {
+                h = (h ^ bytes[i] as u32).wrapping_mul(16777619);
+                i += 1;
+            }
+            // One-letter words and numbers are never searched for names we index.
+            if i - s > 1 {
+                v.push(h);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    v.sort_unstable();
+    v.dedup();
+    v.into_boxed_slice()
+}
+
+/// May a file with these word hashes hold `name`? An empty list means unknown.
+pub fn may_hold(words: &[u32], name: &str) -> bool {
+    words.is_empty() || name.len() < 2 || words.binary_search(&word_hash(name.as_bytes())).is_ok()
+}
+
 pub fn is_ident_char(c: char) -> bool {
     c == '_' || c == '$' || c.is_alphanumeric()
 }
@@ -207,6 +251,16 @@ mod tests {
 #[cfg(test)]
 mod ident_tests {
     use super::*;
+
+    #[test]
+    fn word_hashes_are_sorted_unique_and_match_names() {
+        let w = word_hashes("class Foo { val fooBar = Foo(); // Foo\n é 日本 x $y }".as_bytes());
+        assert!(w.windows(2).all(|p| p[0] < p[1]));
+        assert!(may_hold(&w, "Foo") && may_hold(&w, "fooBar") && may_hold(&w, "$y") && may_hold(&w, "日本"));
+        assert!(!may_hold(&w, "Bar"));
+        assert!(may_hold(&w, "x"), "short names are never skipped");
+        assert!(may_hold(&[], "Anything"), "an empty list means unknown");
+    }
 
     #[test]
     fn finds_identifier_and_qualifier() {

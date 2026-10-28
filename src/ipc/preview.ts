@@ -57,6 +57,14 @@ export function mdRender(text: string): Promise<string> {
   return invoke<string>('md_render', { text });
 }
 
+/**
+ * Renders markdown from other people (pull request comments) for the main
+ * window: raw HTML is not rendered and unsafe links are dropped.
+ */
+export function mdRenderSafe(text: string): Promise<string> {
+  return invoke<string>('md_render_safe', { text });
+}
+
 /** Lets the preview protocol serve files in the folder of `path`. */
 export function previewAllowParent(path: string): Promise<void> {
   return invoke<void>('preview_allow_parent', { path });

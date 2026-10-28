@@ -125,6 +125,58 @@ export async function referencesAt(view: EditorView, line: number, column: numbe
   return locations ?? [];
 }
 
+/** An LSP `CallHierarchyItem`. We keep it as the server sent it and send it back for the next level. */
+export interface CallHierarchyItem {
+  name: string;
+  kind: number;
+  detail?: string;
+  uri: string;
+  range: Range;
+  selectionRange: Range;
+  [key: string]: unknown;
+}
+
+export interface IncomingCall {
+  from: CallHierarchyItem;
+  fromRanges: Range[];
+}
+
+export interface IncomingCallsResult {
+  item: CallHierarchyItem;
+  calls: IncomingCall[];
+}
+
+/**
+ * Callers of a method. Pass `item` for a deeper level, or a position
+ * (`view` plus 1-based line and column) for the root.
+ * Returns null when the server has no call hierarchy or finds no method at the position.
+ */
+export async function incomingCalls(
+  client: LSPClient,
+  target: { item: CallHierarchyItem } | { view: EditorView; line: number; column: number },
+): Promise<IncomingCallsResult | null> {
+  if (!client.serverCapabilities?.callHierarchyProvider) return null;
+  client.sync();
+  let item: CallHierarchyItem | undefined;
+  if ('item' in target) {
+    item = target.item;
+  } else {
+    const plugin = LSPPlugin.get(target.view);
+    if (!plugin) return null;
+    const doc = target.view.state.doc;
+    const text = doc.line(Math.min(Math.max(target.line, 1), doc.lines));
+    const pos = Math.min(text.from + Math.max(target.column - 1, 0), text.to);
+    const items = await client.request<unknown, CallHierarchyItem[] | null>('textDocument/prepareCallHierarchy', {
+      textDocument: { uri: plugin.uri },
+      position: plugin.toPosition(pos),
+    });
+    item = items?.[0];
+  }
+  if (!item) return null;
+  const calls = await client.request<unknown, IncomingCall[] | null>('callHierarchy/incomingCalls', { item });
+  return { item, calls: calls ?? [] };
+}
+
 interface WorkspaceEdit {
   changes?: Record<string, TextEdit[]>;
   documentChanges?: ({ textDocument: { uri: string }; edits: TextEdit[] } | { kind: string })[];

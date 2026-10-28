@@ -294,3 +294,34 @@
   cursor: pointer;
   font: inherit;
 }
+
+/* --- Input method (IME) --- */
+
+/*
+ * The marked text of an input method (Japanese, Vietnamese ...), drawn at the cursor
+ * by ime.ts. The size, position and font are set in the script. xterm shows its own
+ * composition view with a black background, so we do not use it.
+ */
+.term-screen .xterm .term-ime {
+  position: absolute;
+  z-index: 1;
+  display: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: pre;
+  pointer-events: none;
+  color: var(--fg);
+  background: var(--bg);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.term-screen .xterm .term-ime.is-active {
+  display: block;
+}
+
+/* The textarea of xterm holds the marked text for the IME. It stays invisible. */
+.term-screen .xterm .xterm-helper-textarea {
+  caret-color: transparent;
+}

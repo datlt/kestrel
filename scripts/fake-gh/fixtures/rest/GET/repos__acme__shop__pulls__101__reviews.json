@@ -1,0 +1,22 @@
+[
+  {
+    "id": 7001,
+    "user": {
+      "login": "kenji-w",
+      "type": "User"
+    },
+    "state": "COMMENTED",
+    "body": "Nice small change. I left no inline comments.",
+    "submitted_at": "2026-10-25T09:50:00Z"
+  },
+  {
+    "id": 7002,
+    "user": {
+      "login": "bob-reviewer",
+      "type": "User"
+    },
+    "state": "CHANGES_REQUESTED",
+    "body": "Please check the total when the discount is bigger than the subtotal.",
+    "submitted_at": "2026-10-26T14:10:00Z"
+  }
+]

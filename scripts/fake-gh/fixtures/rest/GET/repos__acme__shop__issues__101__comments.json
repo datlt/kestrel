@@ -1,0 +1,20 @@
+[
+  {
+    "id": 9001,
+    "user": {
+      "login": "kenji-w",
+      "type": "User"
+    },
+    "created_at": "2026-10-25T10:00:00Z",
+    "body": "Looks good to me. One question: do we **stack** rules or take the best one?\n\nSee [the cart docs](/acme/shop/blob/main/docs/discounts.md)."
+  },
+  {
+    "id": 9002,
+    "user": {
+      "login": "mira-dev",
+      "type": "User"
+    },
+    "created_at": "2026-10-25T12:30:00Z",
+    "body": "We stack them. I added a note in `docs/discounts.md`.\n\n<script>alert(1)</script>\n\n![x](http://images.example.test/a.png)"
+  }
+]

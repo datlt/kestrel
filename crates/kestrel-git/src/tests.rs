@@ -497,3 +497,365 @@ fn blame_errors_for_untracked_file() {
     let e = blame(r.root(), "new.txt", None).unwrap_err();
     assert_eq!(e.code(), codes::NOT_FOUND);
 }
+
+// --- Branch switcher ---------------------------------------------------------
+
+#[test]
+fn parse_track_forms() {
+    assert_eq!(parse::parse_track(""), (0, 0, false));
+    assert_eq!(parse::parse_track("[ahead 2]"), (2, 0, false));
+    assert_eq!(parse::parse_track("[behind 3]"), (0, 3, false));
+    assert_eq!(parse::parse_track("[ahead 2, behind 1]"), (2, 1, false));
+    assert_eq!(parse::parse_track("[gone]"), (0, 0, true));
+}
+
+/// A repo with a commit on `main`, plus a bare remote named `origin`.
+fn repo_with_remote() -> (Repo, tempfile::TempDir) {
+    let r = Repo::new();
+    r.write("a.txt", "one\n");
+    r.commit_all("first");
+    let remote = tempfile::tempdir().unwrap();
+    let out = Command::new("git").args(["init", "-q", "--bare", "-b", "main"]).arg(remote.path()).output().unwrap();
+    assert!(out.status.success());
+    r.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    r.git(&["push", "-q", "-u", "origin", "main"]);
+    (r, remote)
+}
+
+fn commit_at(r: &Repo, file: &str, msg: &str, date: &str) {
+    r.write(file, msg);
+    r.git(&["add", "-A"]);
+    let env = format!("{date} +0000");
+    let out = Command::new("git")
+        .current_dir(r.root())
+        .args(["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+        .args(["commit", "-q", "-m", msg])
+        .env("GIT_COMMITTER_DATE", &env)
+        .env("GIT_AUTHOR_DATE", &env)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn branch_list_local_remote_and_counts() {
+    let (r, _remote) = repo_with_remote();
+    // `feature/x` is ahead of its upstream by one commit.
+    r.git(&["switch", "-q", "-c", "feature/x"]);
+    r.git(&["push", "-q", "-u", "origin", "feature/x"]);
+    commit_at(&r, "b.txt", "second", "2020-01-01T00:00:00");
+    // `old` has no upstream and an old commit.
+    r.git(&["switch", "-q", "main"]);
+    r.git(&["switch", "-q", "-c", "old"]);
+    commit_at(&r, "c.txt", "ancient", "2001-01-01T00:00:00");
+    r.git(&["switch", "-q", "main"]);
+    // `origin/only-remote` has no local branch.
+    r.git(&["push", "-q", "origin", "main:only-remote"]);
+    r.git(&["fetch", "-q"]);
+
+    let list = branch_list(r.root()).unwrap();
+    assert_eq!(list.current.as_deref(), Some("main"));
+    assert!(!list.detached);
+    assert!(list.head.is_some());
+    let names: Vec<_> = list.local.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+    // Newest commit first. `main` has the commit of today.
+    assert_eq!(names, ["main", "feature/x", "old"]);
+    let fx = &list.local[1];
+    assert_eq!(fx.upstream.as_deref(), Some("origin/feature/x"));
+    assert_eq!((fx.ahead, fx.behind, fx.gone), (1, 0, false));
+    assert_eq!(fx.subject, "second");
+    assert_eq!(fx.time, 1577836800);
+    let main = list.local.iter().find(|b| b.name == "main").unwrap();
+    assert!(main.current);
+    assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+    assert_eq!((main.ahead, main.behind), (0, 0));
+    let old = list.local.iter().find(|b| b.name == "old").unwrap();
+    assert_eq!(old.upstream, None);
+    assert_eq!(old.subject, "ancient");
+
+    let remote: Vec<_> = list.remote.iter().map(|b| b.name.as_str()).collect();
+    assert!(remote.contains(&"origin/only-remote"), "{remote:?}");
+    assert!(remote.contains(&"origin/feature/x"));
+    assert!(!remote.iter().any(|n| n.ends_with("/HEAD")));
+    let ro = list.remote.iter().find(|b| b.name == "origin/only-remote").unwrap();
+    assert_eq!(ro.remote, "origin");
+    assert_eq!(ro.subject, "first");
+}
+
+#[test]
+fn branch_list_behind_and_gone() {
+    let (r, remote) = repo_with_remote();
+    // Another clone pushes a commit to main and deletes `topic`.
+    r.git(&["switch", "-q", "-c", "topic"]);
+    r.git(&["push", "-q", "-u", "origin", "topic"]);
+    r.git(&["switch", "-q", "main"]);
+    let other = tempfile::tempdir().unwrap();
+    let st = Command::new("git").args(["clone", "-q"]).arg(remote.path()).arg(other.path()).output().unwrap();
+    assert!(st.status.success());
+    let g = |args: &[&str]| {
+        let o = Command::new("git")
+            .current_dir(other.path())
+            .args(["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    std::fs::write(other.path().join("n.txt"), "n").unwrap();
+    g(&["add", "-A"]);
+    g(&["commit", "-q", "-m", "remote work"]);
+    g(&["push", "-q", "origin", "main"]);
+    g(&["push", "-q", "origin", ":topic"]);
+
+    let git = Git::new();
+    git.fetch_with_timeout("f", r.root(), Duration::from_secs(60)).unwrap();
+    let list = branch_list(r.root()).unwrap();
+    let main = list.local.iter().find(|b| b.name == "main").unwrap();
+    assert_eq!((main.ahead, main.behind), (0, 1));
+    // `--prune` removed the remote branch, and `topic` shows as gone.
+    assert!(!list.remote.iter().any(|b| b.name == "origin/topic"));
+    let topic = list.local.iter().find(|b| b.name == "topic").unwrap();
+    assert!(topic.gone);
+}
+
+#[test]
+fn branch_list_detached_and_unborn() {
+    let r = Repo::new();
+    let list = branch_list(r.root()).unwrap();
+    assert_eq!(list.current.as_deref(), Some("main"));
+    assert_eq!(list.head, None);
+    assert!(!list.detached);
+    assert!(list.local.is_empty());
+
+    r.write("a.txt", "1");
+    r.commit_all("first");
+    r.git(&["switch", "-q", "--detach", "HEAD"]);
+    let list = branch_list(r.root()).unwrap();
+    assert_eq!(list.current, None);
+    assert!(list.detached);
+    assert_eq!(list.head.as_deref().map(str::len), Some(7));
+    assert!(list.local.iter().all(|b| !b.current));
+}
+
+#[test]
+fn branch_list_is_fast_with_2000_branches() {
+    use std::io::Write;
+    let r = Repo::new();
+    r.write("a.txt", "1");
+    r.commit_all("first");
+    let sha = r.git(&["rev-parse", "HEAD"]).trim().to_string();
+    let mut input = String::new();
+    for i in 0..2000 {
+        input.push_str(&format!("create refs/heads/bulk/b{i} {sha}\n"));
+    }
+    let mut child = Command::new("git")
+        .current_dir(r.root())
+        .args(["update-ref", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success());
+    let t = std::time::Instant::now();
+    let list = branch_list(r.root()).unwrap();
+    let took = t.elapsed();
+    assert_eq!(list.local.len(), 2001);
+    assert!(took < Duration::from_secs(3), "took {took:?}");
+}
+
+#[test]
+fn switch_plain_new_and_missing() {
+    let r = Repo::new();
+    r.write("a.txt", "1");
+    r.commit_all("first");
+    r.git(&["branch", "other"]);
+
+    switch(r.root(), "other", &SwitchOptions::default()).unwrap();
+    assert_eq!(branch_list(r.root()).unwrap().current.as_deref(), Some("other"));
+
+    let opts = SwitchOptions { create: true, ..Default::default() };
+    switch(r.root(), "fresh/one", &opts).unwrap();
+    assert_eq!(branch_list(r.root()).unwrap().current.as_deref(), Some("fresh/one"));
+
+    // Create from a start point.
+    r.write("b.txt", "2");
+    r.commit_all("second");
+    let opts = SwitchOptions { create: true, start_point: Some("main".into()), ..Default::default() };
+    switch(r.root(), "from-main", &opts).unwrap();
+    assert!(!r.root().join("b.txt").exists());
+
+    // A name that exists.
+    let e = switch(r.root(), "other", &opts).unwrap_err();
+    assert_eq!(e.code(), codes::ALREADY_EXISTS);
+    // A branch that does not exist.
+    let e = switch(r.root(), "nope", &SwitchOptions::default()).unwrap_err();
+    assert_eq!(e.code(), codes::NOT_FOUND, "{}", e);
+    // A name that looks like an option.
+    let e = switch(r.root(), "--force", &SwitchOptions::default()).unwrap_err();
+    assert_eq!(e.code(), codes::INVALID_INPUT);
+}
+
+#[test]
+fn switch_track_remote_branch() {
+    let (r, _remote) = repo_with_remote();
+    r.git(&["push", "-q", "origin", "main:feature/remote"]);
+    r.git(&["fetch", "-q"]);
+    let opts = SwitchOptions { track: Some("origin/feature/remote".into()), ..Default::default() };
+    switch(r.root(), "feature/remote", &opts).unwrap();
+    let list = branch_list(r.root()).unwrap();
+    assert_eq!(list.current.as_deref(), Some("feature/remote"));
+    let b = list.local.iter().find(|b| b.name == "feature/remote").unwrap();
+    assert_eq!(b.upstream.as_deref(), Some("origin/feature/remote"));
+}
+
+#[test]
+fn switch_blocked_by_local_changes_is_conflict_and_stash_flow() {
+    let r = Repo::new();
+    r.write("a.txt", "base\n");
+    r.commit_all("first");
+    r.git(&["switch", "-q", "-c", "other"]);
+    r.write("a.txt", "other\n");
+    r.commit_all("other change");
+    r.git(&["switch", "-q", "main"]);
+
+    // A tracked change that conflicts with the target branch.
+    r.write("a.txt", "mine\n");
+    let e = switch(r.root(), "other", &SwitchOptions::default()).unwrap_err();
+    assert_eq!(e.code(), codes::CONFLICT, "{}", e);
+    assert!(e.to_string().contains("a.txt"), "{}", e);
+    // Nothing was thrown away.
+    assert_eq!(std::fs::read_to_string(r.root().join("a.txt")).unwrap(), "mine\n");
+    assert_eq!(branch_list(r.root()).unwrap().current.as_deref(), Some("main"));
+
+    // An untracked file that the target branch would overwrite.
+    r.git(&["checkout", "-q", "--", "a.txt"]);
+    r.git(&["switch", "-q", "other"]);
+    r.write("only-other.txt", "x");
+    r.commit_all("add file");
+    r.git(&["switch", "-q", "main"]);
+    r.write("only-other.txt", "untracked mine");
+    let e = switch(r.root(), "other", &SwitchOptions::default()).unwrap_err();
+    assert_eq!(e.code(), codes::CONFLICT, "{}", e);
+    std::fs::remove_file(r.root().join("only-other.txt")).unwrap();
+
+    // Stash, switch, pop.
+    r.write("a.txt", "mine\n");
+    r.write("new-untracked.txt", "u\n");
+    let msg = format!("{STASH_PREFIX} other");
+    assert!(stash_push(r.root(), &msg).unwrap().created);
+    assert!(!r.root().join("new-untracked.txt").exists());
+    switch(r.root(), "other", &SwitchOptions::default()).unwrap();
+    switch(r.root(), "main", &SwitchOptions::default()).unwrap();
+    stash_pop(r.root()).unwrap();
+    assert_eq!(std::fs::read_to_string(r.root().join("a.txt")).unwrap(), "mine\n");
+    assert!(r.root().join("new-untracked.txt").exists());
+    assert_eq!(r.git(&["stash", "list"]).trim(), "");
+}
+
+#[test]
+fn stash_edge_cases() {
+    let r = Repo::new();
+    r.write("a.txt", "base\n");
+    r.commit_all("first");
+    // Nothing to stash.
+    assert!(!stash_push(r.root(), "Kestrel: before switching to x").unwrap().created);
+    // No Kestrel stash.
+    assert_eq!(stash_pop(r.root()).unwrap_err().code(), codes::NOT_FOUND);
+    // A stash of the user is not touched.
+    r.write("a.txt", "user work\n");
+    r.git(&["stash", "push", "-m", "my own stash"]);
+    assert_eq!(stash_pop(r.root()).unwrap_err().code(), codes::NOT_FOUND);
+    // The newest Kestrel stash is used, even with a user stash on top.
+    r.write("a.txt", "kestrel work\n");
+    stash_push(r.root(), &format!("{STASH_PREFIX} y")).unwrap();
+    r.write("a.txt", "newer user work\n");
+    r.git(&["stash", "push", "-m", "another own stash"]);
+    stash_pop(r.root()).unwrap();
+    assert_eq!(std::fs::read_to_string(r.root().join("a.txt")).unwrap(), "kestrel work\n");
+    assert_eq!(r.git(&["stash", "list"]).lines().count(), 2);
+}
+
+#[test]
+fn stash_pop_conflict_reports_conflict() {
+    let r = Repo::new();
+    r.write("a.txt", "base\n");
+    r.commit_all("first");
+    r.write("a.txt", "stashed\n");
+    stash_push(r.root(), &format!("{STASH_PREFIX} z")).unwrap();
+    r.write("a.txt", "different\n");
+    r.commit_all("other work");
+    let e = stash_pop(r.root()).unwrap_err();
+    assert_eq!(e.code(), codes::CONFLICT, "{}", e);
+    // Git keeps the stash when it does not apply.
+    assert_eq!(r.git(&["stash", "list"]).lines().count(), 1);
+}
+
+#[test]
+fn validate_names() {
+    let r = Repo::new();
+    r.write("a.txt", "1");
+    r.commit_all("first");
+    let ok = |n: &str| validate_branch_name(r.root(), n).unwrap();
+    assert!(ok("feature/new-thing").valid);
+    assert!(ok("v1.2").valid);
+    assert!(ok("日本語").valid);
+    for bad in ["", " ", "a b", "a..b", "-x", "x.lock", "a~b", "a:b", "/x", "x/", "@{-1}", "HEAD", "a//b", "x."] {
+        let c = ok(bad);
+        assert!(!c.valid, "{bad:?} should be invalid");
+        assert!(c.message.is_some());
+    }
+    let c = ok("main");
+    assert!(!c.valid);
+    assert!(c.message.unwrap().contains("already exists"));
+}
+
+#[test]
+fn fetch_prunes_and_reports_errors() {
+    let (r, remote) = repo_with_remote();
+    r.git(&["push", "-q", "origin", "main:gone-soon"]);
+    r.git(&["fetch", "-q"]);
+    assert!(branch_list(r.root()).unwrap().remote.iter().any(|b| b.name == "origin/gone-soon"));
+    let o = Command::new("git").current_dir(remote.path()).args(["branch", "-D", "gone-soon"]).output().unwrap();
+    assert!(o.status.success());
+    let git = Git::new();
+    git.fetch("f", r.root()).unwrap();
+    assert!(!branch_list(r.root()).unwrap().remote.iter().any(|b| b.name == "origin/gone-soon"));
+
+    // A remote that does not exist gives an error and no password prompt.
+    r.git(&["remote", "set-url", "origin", "/no/such/place"]);
+    let e = git.fetch("f", r.root()).unwrap_err();
+    assert_eq!(e.code(), codes::IO);
+}
+
+#[test]
+fn fetch_without_remote_is_fine() {
+    let r = Repo::new();
+    r.write("a.txt", "1");
+    r.commit_all("first");
+    Git::new().fetch("f", r.root()).unwrap();
+}
+
+#[test]
+fn fetch_timeout_and_cancel() {
+    let (r, _remote) = repo_with_remote();
+    // A slow upload-pack program makes the fetch take a long time.
+    r.git(&["config", "remote.origin.uploadpack", "sleep 5 && git-upload-pack"]);
+    let git = Git::new();
+    let t = std::time::Instant::now();
+    let e = git.fetch_with_timeout("f", r.root(), Duration::from_millis(300)).unwrap_err();
+    assert_eq!(e.code(), codes::IO, "{e}");
+    assert!(e.to_string().contains("longer than"), "{e}");
+    assert!(t.elapsed() < Duration::from_secs(4));
+
+    let git = Arc::new(Git::new());
+    let g2 = git.clone();
+    let root = r.root().to_path_buf();
+    let h = std::thread::spawn(move || g2.fetch("fc", &root));
+    std::thread::sleep(Duration::from_millis(400));
+    git.cancel("fc");
+    let e = h.join().unwrap().unwrap_err();
+    assert_eq!(e.code(), codes::CANCELLED);
+}

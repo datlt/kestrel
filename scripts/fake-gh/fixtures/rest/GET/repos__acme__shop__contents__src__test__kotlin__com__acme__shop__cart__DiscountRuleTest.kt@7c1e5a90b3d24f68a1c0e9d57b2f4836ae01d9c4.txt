@@ -1,0 +1,19 @@
+package com.acme.shop.cart
+
+import com.acme.shop.money.Money
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class DiscountRuleTest {
+    private val rule = PercentOverMinimum(percent = 10, minimum = Money.of(50))
+
+    @Test
+    fun `no discount below the minimum`() {
+        assertEquals(Money.ZERO, rule.discountFor(emptyList(), Money.of(49)))
+    }
+
+    @Test
+    fun `ten percent at the minimum`() {
+        assertEquals(Money.of(5), rule.discountFor(emptyList(), Money.of(50)))
+    }
+}

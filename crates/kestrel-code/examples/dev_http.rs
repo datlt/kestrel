@@ -9,7 +9,7 @@
 //! Error: status 400 and `{ "code": "...", "message": "..." }`.
 //! The owner is always "dev". Running requests can be stopped with `code_cancel`.
 
-use kestrel_code::{CodeManager, DiagramRequest, UsagesRequest};
+use kestrel_code::{CallersRequest, CodeManager, DiagramRequest, UsagesRequest};
 use kestrel_common::{Error, Result};
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
@@ -171,13 +171,16 @@ fn invoke(m: &CodeManager, running: &Running, cmd: &str, a: Value) -> Result<Val
             }
             out(())
         }
-        "code_diagram" | "code_usages" => {
+        "code_diagram" | "code_usages" | "code_callers" => {
             let id: u64 = arg(&a, "id")?;
             let flag = Arc::new(AtomicBool::new(false));
             running.lock().insert(id, flag.clone());
             let result = if cmd == "code_diagram" {
                 let req: Result<DiagramRequest> = arg(&a, "request");
                 req.and_then(|r| m.diagram(OWNER, &r, &flag)).and_then(out)
+            } else if cmd == "code_callers" {
+                let req: Result<CallersRequest> = arg(&a, "request");
+                req.and_then(|r| m.callers(OWNER, &r, &flag)).and_then(out)
             } else {
                 let req: Result<UsagesRequest> = arg(&a, "request");
                 req.and_then(|r| m.usages(OWNER, &r, &flag)).and_then(out)

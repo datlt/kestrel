@@ -477,6 +477,15 @@ impl<'a> Src<'a> {
         }
     }
 
+    /// Line where token `pos - 1` ends: the last line that a declaration has
+    /// read when the cursor is at `pos`.
+    pub fn last_line(&self, pos: usize) -> u32 {
+        match pos.checked_sub(1).and_then(|i| self.toks.get(i)) {
+            Some(t) => self.lc_off((t.end as usize).saturating_sub(1)).0,
+            None => 0,
+        }
+    }
+
     pub fn line(&self, tok: usize) -> u32 {
         self.lc(tok).0
     }

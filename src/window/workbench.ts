@@ -20,6 +20,7 @@ import { initWeb } from '../features/web';
 import { initTerminal } from '../features/terminal';
 import { initDiagram } from '../features/diagram';
 import { initUsages } from '../features/usages';
+import { initGithub } from '../features/github';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -90,6 +91,7 @@ export async function createWorkbench(init: WorkbenchInit): Promise<Workbench> {
     ['terminal', initTerminal],
     ['diagram', initDiagram],
     ['usages', initUsages],
+    ['github', initGithub],
   ];
   for (const [name, fn] of features) {
     try {

@@ -236,6 +236,11 @@ pub struct Member {
     pub receiver: Option<TypeRef>,
     pub line: u32,
     pub column: u32,
+    /// Last line of the member: the line of the closing `}` of its body, or
+    /// the last line of an expression body (`= ...`), an initializer or a
+    /// declaration without a body. The call hierarchy uses `line..=end_line`
+    /// to find the method or property around a call. 0 when unknown.
+    pub end_line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

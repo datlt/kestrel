@@ -45,6 +45,12 @@ pub mod codes {
     /// The server refused the login (MySQL error 1045, Trino HTTP 401).
     /// The frontend asks for the password and tries again.
     pub const DB_AUTH: &str = "db_auth";
+    /// The `gh` program (GitHub CLI) is not installed.
+    pub const GH_MISSING: &str = "gh_missing";
+    /// `gh` has no login for the host, or the server refused the token (HTTP 401).
+    pub const GH_AUTH: &str = "gh_auth";
+    /// GitHub answered with an error. The message has the HTTP status and the text of GitHub.
+    pub const GH_ERROR: &str = "gh_error";
 }
 
 impl Error {

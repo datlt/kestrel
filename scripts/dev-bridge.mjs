@@ -1168,6 +1168,40 @@ function checkRev(rev) {
   if (!rev || rev.startsWith('-') || rev.includes('\0')) throw invalid(`bad revision: ${JSON.stringify(rev)}`);
 }
 
+const runningFetch = new Map();
+const FETCH_TIMEOUT_MS = 120_000;
+const STASH_PREFIX = 'Kestrel: before switching to';
+
+/** Reads `%(upstream:track)`: `[ahead 2, behind 1]`, `[gone]` or an empty text. */
+function parseTrack(text) {
+  const s = text.trim().replace(/^\[/, '').replace(/\]$/, '');
+  if (s === 'gone') return { ahead: 0, behind: 0, gone: true };
+  let ahead = 0;
+  let behind = 0;
+  for (const part of s.split(',')) {
+    const m = /^\s*(ahead|behind)\s+(\d+)/.exec(part);
+    if (m?.[1] === 'ahead') ahead = parseInt(m[2], 10);
+    else if (m?.[1] === 'behind') behind = parseInt(m[2], 10);
+  }
+  return { ahead, behind, gone: false };
+}
+
+function gitText(out) {
+  return [out.stdout.toString('utf8').trim(), out.stderr.trim()].filter(Boolean).join('\n');
+}
+
+/** True when git refuses because local changes or files are in the way. */
+function blockedByChanges(msg) {
+  const m = msg.toLowerCase();
+  return (
+    m.includes('would be overwritten') ||
+    m.includes('commit your changes or stash') ||
+    m.includes('you have unmerged paths') ||
+    m.includes('resolve your current index first') ||
+    m.includes('needs merge')
+  );
+}
+
 const gitCommands = {
   async git_repo_info({ root }) {
     const top = await topLevel(root);
@@ -1281,6 +1315,151 @@ const gitCommands = {
     }
     list.sort((a, b) => Number(b.current) - Number(a.current) || Number(a.remote) - Number(b.remote) || (a.name < b.name ? -1 : 1));
     return list;
+  },
+  async git_branch_list({ root }) {
+    await requireDir(root);
+    const format = '--format=%(HEAD)%00%(refname)%00%(objectname:short)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)%00%(contents:subject)';
+    const buf = await gitOk(root, ['for-each-ref', '--sort=-committerdate', format, 'refs/heads', 'refs/remotes']);
+    const local = [];
+    const remote = [];
+    for (const line of buf.toString('utf8').split('\n')) {
+      const f = line.split('\0');
+      if (f.length < 7) continue;
+      const [, full, sha, time, upstream, track, subject] = f;
+      if (full.startsWith('refs/heads/')) {
+        const { ahead, behind, gone } = parseTrack(track);
+        local.push({
+          name: full.slice('refs/heads/'.length),
+          current: f[0] === '*',
+          sha,
+          time: parseInt(time, 10) || 0,
+          subject,
+          upstream: upstream || null,
+          ahead,
+          behind,
+          gone,
+        });
+      } else if (full.startsWith('refs/remotes/')) {
+        const name = full.slice('refs/remotes/'.length);
+        if (name.endsWith('/HEAD') || !name.includes('/')) continue;
+        remote.push({ name, remote: name.split('/')[0], sha, time: parseInt(time, 10) || 0, subject });
+      }
+    }
+    const sym = await git(root, ['symbolic-ref', '-q', '--short', 'HEAD']);
+    const current = sym.code === 0 ? sym.stdout.toString('utf8').trim() : null;
+    const headOut = await git(root, ['rev-parse', '-q', '--verify', '--short', 'HEAD']);
+    const head = headOut.code === 0 ? headOut.stdout.toString('utf8').trim() : null;
+    for (const b of local) b.current = b.name === current;
+    return { current, detached: current === null && head !== null, head, local, remote };
+  },
+  async git_switch({ root, branch, options }) {
+    await requireDir(root);
+    const o = options ?? {};
+    const bad = (s, what) => {
+      if (!s || s.startsWith('-') || s.includes('\0') || s.includes('\n')) throw invalid(`bad ${what}: ${JSON.stringify(s)}`);
+    };
+    const args = ['switch'];
+    if (o.track) {
+      bad(o.track, 'remote branch');
+      args.push('--track');
+      if (branch) {
+        bad(branch, 'branch name');
+        args.push('-c', branch);
+      }
+      args.push(o.track);
+    } else if (o.create) {
+      bad(branch, 'branch name');
+      args.push('-c', branch);
+      if (o.startPoint) {
+        bad(o.startPoint, 'start point');
+        args.push(o.startPoint);
+      }
+    } else {
+      bad(branch, 'branch name');
+      args.push(branch);
+    }
+    const out = await git(root, args);
+    if (out.code === 0) return null;
+    const msg = gitText(out);
+    const low = msg.toLowerCase();
+    if (blockedByChanges(msg)) throw new KError('conflict', msg);
+    if (low.includes('already exists')) throw new KError('already_exists', msg);
+    if (['invalid reference', 'invalid starting point', 'not a commit', 'unknown revision', 'a branch is expected'].some((t) => low.includes(t))) {
+      throw notFound(msg);
+    }
+    throw gitFailure(out);
+  },
+  async git_stash_push({ root, message }) {
+    await requireDir(root);
+    if (String(message).includes('\0')) throw invalid('bad stash message');
+    const out = await git(root, ['stash', 'push', '-u', '-m', message]);
+    if (out.code !== 0) throw gitFailure(out);
+    return { created: !out.stdout.toString('utf8').includes('No local changes to save') };
+  },
+  async git_stash_pop({ root }) {
+    await requireDir(root);
+    const list = await gitOk(root, ['stash', 'list', '--format=%gd%x00%gs']);
+    let name = null;
+    for (const line of list.toString('utf8').split('\n')) {
+      const [ref, subject] = line.split('\0');
+      if (subject?.includes(STASH_PREFIX)) {
+        name = ref;
+        break;
+      }
+    }
+    if (!name) throw notFound('there is no stash made by Kestrel');
+    const out = await git(root, ['stash', 'pop', name]);
+    if (out.code === 0) return null;
+    const msg = gitText(out);
+    if (blockedByChanges(msg) || msg.toLowerCase().includes('conflict')) throw new KError('conflict', msg);
+    throw gitFailure(out);
+  },
+  async git_fetch({ root }, c) {
+    await requireDir(root);
+    const key = `${c.id}\0fetch\0${root}`;
+    runningFetch.get(key)?.kill();
+    const handle = {
+      cancelled: false,
+      timedOut: false,
+      kill() {
+        this.cancelled = true;
+        this.child?.kill();
+      },
+    };
+    runningFetch.set(key, handle);
+    const timer = setTimeout(() => {
+      handle.timedOut = true;
+      handle.kill();
+    }, FETCH_TIMEOUT_MS);
+    try {
+      const out = await git(root, ['fetch', '--prune', '--all'], { handle });
+      if (out.code !== 0) throw gitFailure(out);
+      return null;
+    } catch (e) {
+      if (handle.timedOut) throw new KError('io', `git fetch took longer than ${FETCH_TIMEOUT_MS / 1000} seconds and was stopped.`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      if (runningFetch.get(key) === handle) runningFetch.delete(key);
+    }
+  },
+  async git_fetch_cancel({ root }, c) {
+    runningFetch.get(`${c.id}\0fetch\0${root}`)?.kill();
+    return null;
+  },
+  async git_validate_branch_name({ root, name }) {
+    await requireDir(root);
+    const bad = (m) => ({ valid: false, message: m });
+    if (!String(name).trim()) return bad('Enter a branch name.');
+    if (name.startsWith('-') || name.includes('\0') || name.includes('@{') || name === 'HEAD') return bad(`'${name}' is not a valid branch name.`);
+    const out = await git(root, ['check-ref-format', '--branch', name]);
+    if (out.code !== 0) {
+      if (out.stderr.includes('not a git repository')) throw gitFailure(out);
+      return bad(`'${name}' is not a valid branch name.`);
+    }
+    const exists = await git(root, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`]);
+    if (exists.code === 0) return bad(`A branch named '${name}' already exists.`);
+    return { valid: true, message: null };
   },
   async git_log({ root, path: file, limit, skip }) {
     cleanPath(file);
@@ -1750,6 +1929,12 @@ const previewCommands = {
   async md_render({ text }) {
     return renderMarkdown(text ?? '');
   },
+  // The real app drops raw HTML (comrak safe mode). Here we escape the whole
+  // text, which is safe and good enough for dev tests.
+  async md_render_safe({ text }) {
+    const esc = String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<p>${esc.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+  },
   async preview_allow_parent() {
     return null;
   },
@@ -1952,6 +2137,7 @@ const CODE_COMMANDS = [
   'code_cancel',
   'code_diagram',
   'code_usages',
+  'code_callers',
 ];
 
 /** Sends one command to the dev_http server. No timeout: an index build can take long. */
@@ -1994,6 +2180,463 @@ function forwardCode(cmd, args) {
 
 const codeCommands = Object.fromEntries(CODE_COMMANDS.map((cmd) => [cmd, (args) => forwardCode(cmd, args)]));
 
+// --- gh_* --------------------------------------------------------------------
+
+// The GitHub commands run the `gh` program from Node, with the same rules as
+// crates/kestrel-gh (docs/DESIGN.md section 12.3). Kestrel never sees a token.
+// For tests, KESTREL_GH_PROGRAM can point to scripts/fake-gh/gh.mjs.
+const GH_TIMEOUT_MS = 30_000;
+const GH_LONG_TIMEOUT_MS = 120_000;
+const GH_STATUS_TTL_MS = 10_000;
+const GH_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const ghErr = (m) => new KError('gh_error', m);
+
+/** Running calls: "<client>:<id>" -> { cancelled, child }. */
+const ghRunning = new Map();
+let ghStatusCache = null;
+
+/** Never logs bodies or answers: only the command, host, method, path without query, status and time. */
+function ghLog(...parts) {
+  if (process.env.KESTREL_GH_LOG) console.debug('[gh]', ...parts);
+}
+
+/** Runs `gh` and collects its output. Kills it after the timeout or on cancel. */
+function ghRun(args, { cwd, input, timeout = GH_TIMEOUT_MS, handle } = {}) {
+  return new Promise((resolve, reject) => {
+    if (handle?.cancelled) return reject(new KError('cancelled', 'cancelled'));
+    const program = process.env.KESTREL_GH_PROGRAM || 'gh';
+    const child = spawn(program, args, {
+      cwd,
+      env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_SPINNER_DISABLED: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (handle) handle.child = child;
+    const out = [];
+    const err = [];
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeout);
+    child.stdout.on('data', (d) => out.push(d));
+    child.stderr.on('data', (d) => err.push(d));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      if (e.code === 'ENOENT') reject(new KError('gh_missing', 'gh is not installed or not in PATH'));
+      else reject(toKError(e));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (handle?.cancelled) return reject(new KError('cancelled', 'cancelled'));
+      if (timedOut) return reject(ghErr(`gh did not answer within ${timeout / 1000} s`));
+      resolve({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString('utf8') });
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+
+// ---- Parsing (same rules as crates/kestrel-gh/src/lib.rs) ----
+
+function ghParseAccounts(buf) {
+  let v;
+  try {
+    v = JSON.parse(buf.toString('utf8'));
+  } catch {
+    throw ghErr('gh auth status gave no JSON');
+  }
+  const accounts = [];
+  for (const [host, entries] of Object.entries(v?.hosts ?? {})) {
+    if (!Array.isArray(entries)) continue;
+    for (const e of entries) {
+      // Only these fields are copied, so a `token` field never goes on.
+      const scopes = Array.isArray(e.scopes)
+        ? e.scopes.filter((x) => typeof x === 'string')
+        : typeof e.scopes === 'string'
+          ? e.scopes.split(',').map((x) => x.trim()).filter(Boolean)
+          : [];
+      const account = {
+        host: typeof e.host === 'string' ? e.host : host,
+        login: typeof e.login === 'string' ? e.login : '',
+        active: e.active === true,
+        state: e.state === 'success' || e.state === 'timeout' ? e.state : 'error',
+        scopes,
+      };
+      if (typeof e.error === 'string' && e.error) account.error = e.error;
+      accounts.push(account);
+    }
+  }
+  return accounts;
+}
+
+/** Splits `HTTP/2.0 200 OK`, the headers, an empty line and the body. Null when there is no status line. */
+function ghSplitResponse(buf) {
+  if (buf.subarray(0, 5).toString('latin1') !== 'HTTP/') return null;
+  const a = buf.indexOf('\r\n\r\n');
+  const b = buf.indexOf('\n\n');
+  let end = buf.length;
+  let skip = 0;
+  if (a >= 0 && (b < 0 || a <= b)) [end, skip] = [a, 4];
+  else if (b >= 0) [end, skip] = [b, 2];
+  const lines = buf.subarray(0, end).toString('utf8').split(/\r?\n/);
+  const status = Number(lines[0].split(/\s+/)[1]);
+  if (!Number.isInteger(status)) return null;
+  const headers = lines
+    .slice(1)
+    .filter((l) => l.includes(':'))
+    .map((l) => [l.slice(0, l.indexOf(':')).trim().toLowerCase(), l.slice(l.indexOf(':') + 1).trim()]);
+  return { status, headers, body: buf.subarray(end + skip) };
+}
+
+/** The error text of a GitHub JSON answer: `message`, then `errors`. */
+function ghMessage(buf) {
+  let v;
+  try {
+    v = JSON.parse(buf.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== 'object') return null;
+  let text = typeof v.message === 'string' ? v.message : '';
+  let details = '';
+  if (Array.isArray(v.errors)) {
+    details = v.errors
+      .map((e) =>
+        typeof e === 'string'
+          ? e
+          : e && typeof e === 'object'
+            ? (e.message ?? ['resource', 'field', 'code'].map((k) => e[k]).filter((x) => typeof x === 'string').join(' '))
+            : '',
+      )
+      .filter(Boolean)
+      .join('; ');
+  } else if (typeof v.errors === 'string') details = v.errors;
+  if (details) text = text ? `${text}: ${details}` : details;
+  return text || null;
+}
+
+const GH_REASONS = { 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 409: 'Conflict', 422: 'Unprocessable Entity', 429: 'Too Many Requests', 500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable' };
+
+function ghStatusError(status, body) {
+  const message = `HTTP ${status}: ${ghMessage(body) ?? GH_REASONS[status] ?? 'Error'}`;
+  if (status === 401) return new KError('gh_auth', message);
+  if (status === 404) return new KError('not_found', message);
+  if (status === 403 && body.toString('utf8').includes('too_large')) return new KError('too_large', message);
+  return ghErr(message);
+}
+
+function ghFirstLine(stderr) {
+  const line = (stderr.split('\n').map((l) => l.trim()).find(Boolean) ?? '').replace(/^gh: /, '');
+  const i = line.lastIndexOf(' (HTTP ');
+  return (i >= 0 ? line.slice(0, i) : line).slice(0, 500);
+}
+
+/** An error from the text `gh` wrote to stderr. */
+function ghFailureMessage(out) {
+  const text = out.stderr.trim().replace(/^gh: /, '').slice(0, 1000);
+  const all = out.stderr.toLowerCase();
+  if (all.includes('gh auth login') || all.includes('not logged in')) return new KError('gh_auth', text || 'not logged in');
+  return ghErr(text || `gh exited with code ${out.code}`);
+}
+
+/** An error from a failed `gh api` run that has no status line in its output. */
+function ghFailureFor(out) {
+  const m = /\(HTTP (\d{3})\)/.exec(out.stderr);
+  if (!m) return ghFailureMessage(out);
+  const status = Number(m[1]);
+  const e = ghStatusError(status, out.stdout);
+  if (ghMessage(out.stdout) === null) {
+    const line = ghFirstLine(out.stderr);
+    if (line) e.message = `HTTP ${status}: ${line}`;
+  }
+  return e;
+}
+
+// ---- Input checks ----
+
+const GH_METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'];
+const GH_PATH_CHARS = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/%]*$/;
+const GH_QUERY_CHARS = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/%?[\]]*$/;
+
+function ghCheckMethod(m) {
+  const method = String(m ?? 'GET').trim().toUpperCase();
+  if (!GH_METHODS.includes(method)) throw invalid(`unsupported HTTP method: ${method}`);
+  return method;
+}
+
+function ghCheckPath(p) {
+  if (typeof p !== 'string' || p === '') throw invalid('the path is empty');
+  if (p.includes('://')) throw invalid('the path must not be a full address');
+  if (p.startsWith('/')) throw invalid('the path must not start with /');
+  if (p.startsWith('-')) throw invalid('the path must not start with -');
+  const q = p.indexOf('?');
+  const pathPart = q < 0 ? p : p.slice(0, q);
+  if (!GH_PATH_CHARS.test(pathPart)) throw invalid('the path has a character that is not allowed');
+  if (q >= 0 && !GH_QUERY_CHARS.test(p.slice(q + 1))) throw invalid('the query has a character that is not allowed');
+  for (const seg of pathPart.split('/')) {
+    const plain = seg.replace(/%2e/gi, '.');
+    if (plain === '..' || plain === '.') throw invalid('the path must not have . or .. segments');
+  }
+}
+
+function ghCheckLogin(l) {
+  if (typeof l !== 'string' || !/^[A-Za-z0-9_.][A-Za-z0-9\-_.]{0,99}$/.test(l)) throw invalid(`not a valid login: ${l}`);
+}
+
+function ghCheckName(n) {
+  if (typeof n !== 'string' || n === '.' || n === '..' || !/^[A-Za-z0-9\-_.]{1,200}$/.test(n)) {
+    throw invalid(`not a valid owner or repository name: ${n}`);
+  }
+}
+
+const ghEncode = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+
+// ---- Status and hosts ----
+
+async function ghStatus(handle) {
+  let version;
+  try {
+    const out = await ghRun(['--version'], { handle });
+    version = /^gh version (\S+)/.exec(out.stdout.toString('utf8'))?.[1] ?? null;
+  } catch (e) {
+    if (e.code === 'gh_missing') return { installed: false, version: null, accounts: [] };
+    throw e;
+  }
+  const out = await ghRun(['auth', 'status', '--json', 'hosts'], { handle });
+  if (out.code !== 0) throw ghFailureMessage(out);
+  const status = { installed: true, version, accounts: ghParseAccounts(out.stdout) };
+  ghStatusCache = { at: Date.now(), status };
+  return status;
+}
+
+/** Checks that the host has a `gh` login. Returns the host as `gh` writes it. */
+async function ghLoginHost(host, handle) {
+  const want = String(host ?? '').trim().toLowerCase();
+  const find = (s) => s.accounts.find((a) => a.host.toLowerCase() === want)?.host;
+  let status = ghStatusCache && Date.now() - ghStatusCache.at < GH_STATUS_TTL_MS ? ghStatusCache.status : await ghStatus(handle);
+  if (!status.installed) throw new KError('gh_missing', 'gh is not installed or not in PATH');
+  const found = find(status);
+  if (found) return found;
+  // The user may have logged in a moment ago. Look once more.
+  status = await ghStatus(handle);
+  const again = find(status);
+  if (!again) throw invalid(`no gh login for the host: ${host}`);
+  return again;
+}
+
+async function ghAuthChange(verb, { host, login }, handle) {
+  ghCheckLogin(login);
+  const h = await ghLoginHost(host, handle);
+  const out = await ghRun(['auth', verb, '--hostname', h, '--user', login], { handle });
+  ghStatusCache = null;
+  ghLog('auth', verb, h, out.code === 0 ? 'ok' : 'failed');
+  if (out.code !== 0) throw ghFailureMessage(out);
+  return null;
+}
+
+// ---- gh api ----
+
+/** Runs `gh api` and checks the HTTP status. Returns { status, headers, body }. */
+async function ghExecApi(host, method, apiPath, { extra = [], body, paginate = false, handle }) {
+  const started = Date.now();
+  const args = ['api', '--hostname', host, '-X', method, ...extra, ...(paginate ? ['--paginate', '--slurp'] : ['-i'])];
+  if (body !== undefined) args.push('--input', '-');
+  args.push(apiPath);
+  const logPath = apiPath.split('?')[0];
+  let status = 'error';
+  try {
+    const out = await ghRun(args, { input: body, timeout: paginate ? GH_LONG_TIMEOUT_MS : GH_TIMEOUT_MS, handle });
+    if (paginate) {
+      if (out.code !== 0) throw ghFailureFor(out);
+      status = 200;
+      return { status: 200, headers: [], body: out.stdout };
+    }
+    const res = ghSplitResponse(out.stdout);
+    if (!res) throw ghFailureFor(out);
+    status = res.status;
+    if (res.status >= 200 && res.status < 400) return res;
+    throw ghStatusError(res.status, res.body);
+  } catch (e) {
+    if (status === 'error') status = e?.code ?? 'error';
+    throw e;
+  } finally {
+    ghLog('api', host, method, logPath, status, `${Date.now() - started} ms`);
+  }
+}
+
+function ghFlatten(v) {
+  if (!Array.isArray(v)) return v;
+  return v.flatMap((page) => (Array.isArray(page) ? page : [page]));
+}
+
+async function ghApi({ request }, handle) {
+  const r = request ?? {};
+  const method = ghCheckMethod(r.method);
+  ghCheckPath(r.path);
+  const paginate = r.paginate === true;
+  const hasBody = r.body !== undefined && r.body !== null;
+  if (paginate && method !== 'GET') throw invalid('paginate works with GET only');
+  if (hasBody && method === 'GET') throw invalid('a GET request has no body');
+  const host = await ghLoginHost(r.host, handle);
+  const res = await ghExecApi(host, method, r.path, { body: hasBody ? JSON.stringify(r.body) : undefined, paginate, handle });
+  if (res.body.toString('utf8').trim() === '') return null;
+  let value;
+  try {
+    value = JSON.parse(res.body.toString('utf8'));
+  } catch {
+    throw ghErr(`HTTP ${res.status}: the answer is not JSON`);
+  }
+  return paginate ? ghFlatten(value) : value;
+}
+
+function ghGraphqlMessages(errors) {
+  if (Array.isArray(errors)) return errors.map((e) => (typeof e === 'string' ? e : e?.message)).filter((x) => typeof x === 'string').join('; ');
+  return typeof errors === 'string' ? errors : '';
+}
+
+async function ghGraphql({ host, query, variables }, handle) {
+  const started = Date.now();
+  const h = await ghLoginHost(host, handle);
+  const out = await ghRun(['api', 'graphql', '--hostname', h, '--input', '-'], {
+    input: JSON.stringify({ query, variables: variables ?? {} }),
+    handle,
+  });
+  ghLog('graphql', h, out.code, `${Date.now() - started} ms`);
+  let value = null;
+  try {
+    value = JSON.parse(out.stdout.toString('utf8'));
+  } catch {}
+  const text = ghGraphqlMessages(value?.errors);
+  if (text) throw ghErr(text);
+  if (out.code !== 0) throw ghFailureFor(out);
+  if (value === null) throw ghErr('the answer is not JSON');
+  return value.data ?? null;
+}
+
+async function ghFileText({ host, owner, repo, path: filePath, ref }, handle) {
+  ghCheckName(owner);
+  ghCheckName(repo);
+  const p = String(filePath ?? '').replace(/^\/+/, '');
+  if (!p || p.split('/').some((s) => s === '' || s === '.' || s === '..')) throw invalid('not a valid file path');
+  if (!ref || String(ref).startsWith('-')) throw invalid('not a valid reference');
+  const apiPath = `repos/${owner}/${repo}/contents/${p.split('/').map(ghEncode).join('/')}?ref=${ghEncode(String(ref))}`;
+  const h = await ghLoginHost(host, handle);
+  const res = await ghExecApi(h, 'GET', apiPath, { extra: ['-H', 'Accept: application/vnd.github.raw'], handle });
+  const length = Number(res.headers.find(([k]) => k === 'content-length')?.[1]);
+  if (res.body.length > GH_MAX_FILE_BYTES || length > GH_MAX_FILE_BYTES) throw new KError('too_large', 'the file is larger than 5 MB');
+  if (res.body.includes(0)) throw new KError('binary', 'the file is binary');
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(res.body);
+  } catch {
+    throw new KError('binary', 'the file is not UTF-8 text');
+  }
+}
+
+// ---- Remotes of a folder ----
+
+/** Parses one remote URL into { host, owner, name } (same forms as kestrel-gh). */
+function ghParseRemoteUrl(url) {
+  url = url.trim();
+  let hostPart;
+  let rest;
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)\/(.*)$/.exec(url);
+  if (m) {
+    if (!['https', 'http', 'ssh', 'git', 'git+ssh', 'ssh+git'].includes(m[1].toLowerCase())) return null;
+    [hostPart, rest] = [m[2], m[3]];
+  } else {
+    const i = url.indexOf(':');
+    if (i < 0) return null;
+    hostPart = url.slice(0, i);
+    rest = url.slice(i + 1);
+    if (!hostPart || hostPart.includes('/') || hostPart.includes('\\') || hostPart.length === 1) return null;
+  }
+  const hostPort = hostPart.slice(hostPart.lastIndexOf('@') + 1);
+  const host = hostPort.startsWith('[') ? hostPort.slice(1, hostPort.indexOf(']')) : hostPort.split(':')[0];
+  if (!host) return null;
+  let p = rest.replace(/^\/+|\/+$/g, '');
+  if (p.endsWith('.git')) p = p.slice(0, -4);
+  const parts = p.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { host: host.toLowerCase(), owner: parts[0], name: parts[1] };
+}
+
+/** `git remote -v` text to a list. `origin` first, each remote once. */
+function ghParseRemotes(text) {
+  const seen = new Set();
+  const list = [];
+  for (const line of text.split('\n')) {
+    const [remote, url] = line.trim().split(/\s+/);
+    if (!remote || !url || seen.has(remote)) continue;
+    const parsed = ghParseRemoteUrl(url);
+    if (!parsed) continue;
+    seen.add(remote);
+    list.push({ ...parsed, remote });
+  }
+  return [...list.filter((r) => r.remote === 'origin'), ...list.filter((r) => r.remote !== 'origin')];
+}
+
+async function ghRepoOf({ root }, handle) {
+  await requireDir(root);
+  let out;
+  try {
+    out = await run('git', ['remote', '-v'], { cwd: root, handle });
+  } catch (e) {
+    if (e.code === 'git_missing') return null;
+    throw e;
+  }
+  if (out.code !== 0) return null;
+  const remotes = ghParseRemotes(out.stdout.toString('utf8'));
+  if (remotes.length === 0) return null;
+  const status = ghStatusCache && Date.now() - ghStatusCache.at < GH_STATUS_TTL_MS ? ghStatusCache.status : await ghStatus(handle);
+  const hit = remotes.find((r) => status.accounts.some((a) => a.host.toLowerCase() === r.host));
+  return hit ? { host: hit.host, owner: hit.owner, name: hit.name, remote: hit.remote } : null;
+}
+
+async function ghPrCheckout({ root, number }, handle) {
+  if (!Number.isInteger(number) || number <= 0) throw invalid('not a valid pull request number');
+  await requireDir(root);
+  const started = Date.now();
+  const out = await ghRun(['pr', 'checkout', String(number)], { cwd: root, timeout: GH_LONG_TIMEOUT_MS, handle });
+  ghLog('pr checkout', out.code, `${Date.now() - started} ms`);
+  if (out.code !== 0) throw ghFailureMessage(out);
+  return [out.stdout.toString('utf8').trim(), out.stderr.trim()].filter(Boolean).join('\n');
+}
+
+/** Runs a handler with a cancel handle that `gh_cancel` can reach (keyed by browser tab and id). */
+async function ghCall(c, id, fn) {
+  const handle = { cancelled: false, child: null };
+  const key = id === undefined ? null : `${c.id}:${id}`;
+  if (key) {
+    ghRunning.get(key)?.child?.kill();
+    if (ghRunning.has(key)) ghRunning.get(key).cancelled = true;
+    ghRunning.set(key, handle);
+  }
+  try {
+    return await fn(handle);
+  } finally {
+    if (key && ghRunning.get(key) === handle) ghRunning.delete(key);
+  }
+}
+
+const ghCommands = {
+  gh_status: (_a, c) => ghCall(c, undefined, (h) => ghStatus(h)),
+  gh_switch: (a, c) => ghCall(c, undefined, (h) => ghAuthChange('switch', a, h)),
+  gh_logout: (a, c) => ghCall(c, undefined, (h) => ghAuthChange('logout', a, h)),
+  gh_api: (a, c) => ghCall(c, a.id, (h) => ghApi(a, h)),
+  gh_graphql: (a, c) => ghCall(c, a.id, (h) => ghGraphql(a, h)),
+  gh_file_text: (a, c) => ghCall(c, a.id, (h) => ghFileText(a, h)),
+  gh_repo_of: (a, c) => ghCall(c, undefined, (h) => ghRepoOf(a, h)),
+  gh_pr_checkout: (a, c) => ghCall(c, undefined, (h) => ghPrCheckout(a, h)),
+  async gh_cancel({ id }, c) {
+    const h = ghRunning.get(`${c.id}:${id}`);
+    if (h) {
+      h.cancelled = true;
+      h.child?.kill();
+    }
+    return null;
+  },
+};
+
 // --- Dispatch ----------------------------------------------------------------
 
 const commands = {
@@ -2006,6 +2649,7 @@ const commands = {
   ...previewCommands,
   ...dbCommands,
   ...codeCommands,
+  ...ghCommands,
 };
 
 const CHANNEL_PREFIX = '__CHANNEL__:';
@@ -2182,6 +2826,66 @@ finally:
     sys.exit(os.waitstatus_to_exitcode(status))
 `;
 
+// The shell environment. It mirrors `crates/kestrel-term/src/env.rs`, so keep the
+// two in step: CLICOLOR for BSD `ls`, a UTF-8 locale also when the environment has
+// LANG=C or LC_ALL=C, and for zsh the Kestrel ZDOTDIR with the command line colors.
+
+const isUtf8Locale = (name) => /utf-?8/i.test(name);
+
+/** Copies the zsh files of the Rust crate to a temp folder and returns the folder. */
+function installZshFiles() {
+  const from = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'crates', 'kestrel-term', 'zsh');
+  const to = path.join(os.tmpdir(), `kestrel-dev-zsh-${process.getuid?.() ?? 0}`);
+  fs.mkdirSync(to, { recursive: true });
+  for (const name of ['.zshenv', '.zprofile', '.zshrc', '.zlogin', 'kestrel-highlight.zsh']) {
+    const text = fs.readFileSync(path.join(from, name), 'utf8');
+    const target = path.join(to, name);
+    let old = null;
+    try {
+      old = fs.readFileSync(target, 'utf8');
+    } catch {
+      // Not written yet.
+    }
+    if (old !== text) {
+      const temp = `${target}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, text);
+      fs.renameSync(temp, target);
+    }
+  }
+  return to;
+}
+
+function termEnvironment(base, program, highlight) {
+  const env = { ...base, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Kestrel' };
+  if (env.CLICOLOR === undefined) env.CLICOLOR = '1';
+  const all = env.LC_ALL || '';
+  const effective = all || env.LC_CTYPE || env.LANG || '';
+  if (!effective) {
+    env.LANG = 'en_US.UTF-8';
+  } else if (!isUtf8Locale(effective)) {
+    env.LC_CTYPE = process.platform === 'darwin' ? 'UTF-8' : 'en_US.UTF-8';
+    if (all) {
+      delete env.LC_ALL;
+      for (const key of ['LC_COLLATE', 'LC_MESSAGES', 'LC_NUMERIC', 'LC_TIME', 'LC_MONETARY']) {
+        if (!env[key]) env[key] = all;
+      }
+    }
+  }
+  if (highlight && path.basename(program) === 'zsh') {
+    try {
+      const dir = installZshFiles();
+      if (env.ZDOTDIR && env.ZDOTDIR !== dir) env.KESTREL_USER_ZDOTDIR = env.ZDOTDIR;
+      else delete env.KESTREL_USER_ZDOTDIR;
+      env.ZDOTDIR = dir;
+      env.KESTREL_ZDOTDIR = dir;
+      env.KESTREL_HIGHLIGHT = '1';
+    } catch (e) {
+      console.warn(`[term] cannot write the zsh files: ${e.message}`);
+    }
+  }
+  return env;
+}
+
 /** Running terminals: "<client id>:<term id>" -> { proc, client }. */
 const termSessions = new Map();
 let termCounter = 0;
@@ -2211,7 +2915,7 @@ process.on('exit', () => {
 });
 
 const termCommands = {
-  async term_spawn({ cwd, cols, rows, shell, channel, events }, c) {
+  async term_spawn({ cwd, cols, rows, shell, highlight, channel, events }, c) {
     if (!channel || !events) throw invalid('term_spawn needs a channel and an events channel');
     const parts = String(shell || '').trim().split(/\s+/).filter(Boolean);
     const program = parts.length ? parts : [process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh'), '-l'];
@@ -2221,8 +2925,7 @@ const termCommands = {
     } catch {
       dir = os.homedir();
     }
-    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Kestrel' };
-    if (!env.LC_ALL && !env.LANG) env.LANG = 'en_US.UTF-8';
+    const env = termEnvironment(process.env, program[0], highlight !== false);
 
     const args = ['-u', '-c', TERM_HELPER, String(cols || 80), String(rows || 24), dir, ...program];
     const proc = spawn('python3', args, { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env });

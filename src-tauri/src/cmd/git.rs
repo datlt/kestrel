@@ -6,7 +6,9 @@
 
 use super::{Handler, SetupResult};
 use kestrel_common::{Error, Result};
-use kestrel_git::{BlameRange, Branch, DiffEntry, Git, LogEntry, RepoInfo, Status};
+use kestrel_git::{
+    BlameRange, Branch, BranchList, DiffEntry, Git, LogEntry, NameCheck, RepoInfo, StashResult, Status, SwitchOptions,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::ipc::Response;
@@ -28,6 +30,11 @@ where
 /// window and root cancels the older one.
 fn job_key(label: &str, root: &str) -> String {
     format!("{label}\u{0}{root}")
+}
+
+/// Fetch jobs start with the window label too, so closing a window stops them.
+fn fetch_key(label: &str, root: &str) -> String {
+    format!("{label}\u{0}fetch\u{0}{root}")
 }
 
 #[tauri::command]
@@ -85,6 +92,46 @@ async fn git_blame(root: String, path: String, contents: Option<String>) -> Resu
     blocking(move || kestrel_git::blame(&PathBuf::from(root), &path, contents.as_deref())).await
 }
 
+#[tauri::command]
+async fn git_branch_list(root: String) -> Result<BranchList> {
+    blocking(move || kestrel_git::branch_list(&PathBuf::from(root))).await
+}
+
+/// Fails with the code `conflict` and git's message when local changes block the switch.
+#[tauri::command]
+async fn git_switch(root: String, branch: String, options: Option<SwitchOptions>) -> Result<()> {
+    blocking(move || kestrel_git::switch(&PathBuf::from(root), &branch, &options.unwrap_or_default())).await
+}
+
+#[tauri::command]
+async fn git_stash_push(root: String, message: String) -> Result<StashResult> {
+    blocking(move || kestrel_git::stash_push(&PathBuf::from(root), &message)).await
+}
+
+/// Applies and removes the newest stash that Kestrel made before a switch.
+#[tauri::command]
+async fn git_stash_pop(root: String) -> Result<()> {
+    blocking(move || kestrel_git::stash_pop(&PathBuf::from(root))).await
+}
+
+/// `git fetch --prune --all`. Stops after 120 s. `git_fetch_cancel` stops it earlier.
+#[tauri::command]
+async fn git_fetch(window: Window, git: Shared<'_>, root: String) -> Result<()> {
+    let git = git.inner().clone();
+    let key = fetch_key(window.label(), &root);
+    blocking(move || git.fetch(&key, &PathBuf::from(root))).await
+}
+
+#[tauri::command]
+fn git_fetch_cancel(window: Window, git: Shared<'_>, root: String) {
+    git.cancel(&fetch_key(window.label(), &root));
+}
+
+#[tauri::command]
+async fn git_validate_branch_name(root: String, name: String) -> Result<NameCheck> {
+    blocking(move || kestrel_git::validate_branch_name(&PathBuf::from(root), &name)).await
+}
+
 pub fn handler() -> Handler {
     Box::new(tauri::generate_handler![
         git_repo_info,
@@ -95,7 +142,14 @@ pub fn handler() -> Handler {
         git_branches,
         git_log,
         git_commit_info,
-        git_blame
+        git_blame,
+        git_branch_list,
+        git_switch,
+        git_stash_push,
+        git_stash_pop,
+        git_fetch,
+        git_fetch_cancel,
+        git_validate_branch_name
     ])
 }
 

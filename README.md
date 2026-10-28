@@ -63,7 +63,13 @@ the whole picture, and quick when you go down to the exact line.
 - **Viewers.** Markdown and HTML preview (code, split or preview mode), CSV and
   TSV as a sortable table, images.
 - **Git.** Changes view, side-by-side and unified diff, compare with any branch,
-  file history, blame, and changed lines in the editor gutter.
+  file history, blame, and changed lines in the editor gutter. Switch or create
+  a branch in two key presses (Mod-Shift-b); Kestrel offers to stash your
+  changes when git refuses.
+- **GitHub pull requests** through the GitHub CLI (`gh`): your accounts, the
+  pull requests that wait for your review and your own, the code changes with
+  the review comments in the diff, new comments, replies, and Approve or
+  Request Changes. See [GitHub pull requests](#github-pull-requests).
 - **MySQL and Trino.** Saved connections (password in the OS keychain, SSH
   tunnel for MySQL, browser login for Trino), schema tree, SQL console with
   auto-commit on or off, commit and rollback, result grid, CSV download, DDL
@@ -84,6 +90,8 @@ the whole picture, and quick when you go down to the exact line.
   [Class diagrams and Find Usages](#class-diagrams-and-find-usages).
 - **Find Usages** (Alt-F7) like IntelliJ, grouped into imports, supertypes,
   new instances, type uses and calls. It works without a language server.
+- **Call Hierarchy** (Mod-Shift-h): the callers of a method, then their
+  callers, as deep as you open the tree.
 - **Language servers (LSP)** for Kotlin, Java, Swift, JavaScript and TypeScript:
   completion, hover, go to definition, references, rename, format, problems.
   See [docs/LSP.md](docs/LSP.md).
@@ -292,6 +300,58 @@ asks it first and shows "Language server" in the panel. The button next to it
 switches to the Kestrel index. Shift-F12 also opens the Usages panel when no
 language server is running.
 
+### Call Hierarchy
+
+Put the cursor on a method, constructor or function and press **Mod-Shift-h**
+(or right-click, Show Call Hierarchy). The Call Hierarchy panel shows the
+methods that call it. Open a caller to see where it calls and who calls that
+caller, and so on up the tree. Each level takes some milliseconds.
+
+- Callers in test code get a "test" tag. "Hide test code" removes them.
+- Callers that Kestrel matched only by the name (for example `execute` of a
+  framework interface) go into a closed group "Same name, maybe other
+  methods" under each node.
+- A caller that is already on the path to the root is marked "recursive".
+- **Expand All** opens three levels (at most 500 callers).
+
+## GitHub pull requests
+
+Kestrel uses the GitHub CLI. It never sees your token: `gh` keeps it in the
+macOS keychain. Install and log in once:
+
+```sh
+brew install gh
+gh auth login --hostname github.com       # or your GitHub Enterprise host
+```
+
+Open the **Pull Requests** view (the pull request icon on the left):
+
+- **Accounts**: every `gh` login, with Switch and Log Out. The "+" button
+  starts `gh auth login` in the Kestrel terminal.
+- **Review Requested**, **My Pull Requests** and **This Repository** (the
+  repository of the open folder). The lists refresh every 5 minutes while the
+  view is open.
+
+Click a pull request to open it in a tab:
+
+- **Overview**: the description, the comments and reviews, and a box for a
+  new comment.
+- **Files**: the changed files and the diff of each file, side by side or in
+  one column (the button in the diff toolbar). Review comments show under
+  their lines. Hover a line and click **+** (or drag over line numbers for
+  several lines) to write a comment. **Add to Review** keeps it as a draft;
+  **Comment Now** posts it at once. `]` and `[` go to the next and previous
+  file, `n` and `p` to the next and previous change. Mark files as viewed
+  with the check box.
+- **Finish Review**: sends your drafts with Comment, Approve or Request
+  Changes. Kestrel asks before Approve and Request Changes. Drafts stay after
+  a restart until you send or delete them.
+- **Check Out** (when the open folder is this repository) runs
+  `gh pr checkout`.
+
+Comments from other people are shown without raw HTML, and links open in your
+browser.
+
 ## Database (MySQL and Trino)
 
 Open the **Database** view with Ctrl-Shift-d (or the database icon on the left).
@@ -414,6 +474,7 @@ Main settings:
 | `db.idea.enabled`, `db.idea.autoConnect` | `true`, `true` | Show and connect the IntelliJ data sources of the open folder |
 | `terminal.shell` | `""` | Shell for new terminals (empty: your login shell) |
 | `terminal.fontSize` | `0` | Terminal font size (0: same as the editor) |
+| `terminal.highlightCommands` | `true` | Color the zsh command line while you type (commands, options, strings, variables) |
 | `web.bookmarks` | `[]` | Pages in the Web view |
 
 ## Keyboard shortcuts
@@ -451,6 +512,8 @@ Main settings:
 | Find references | Shift-F12 |
 | Find usages, next or previous usage | Alt-F7, F4, Shift-F4 |
 | Class diagram of the type at the cursor | Mod-Alt-u |
+| Call hierarchy of the method at the cursor | Mod-Shift-h |
+| Switch branch | Mod-Shift-b (or click the branch in the status bar) |
 | Rename symbol | F2 |
 | Format document | Shift-Alt-f |
 | Workspace symbols | Mod-t |
