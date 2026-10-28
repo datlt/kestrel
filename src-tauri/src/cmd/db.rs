@@ -1,4 +1,4 @@
-//! Tauri commands for the database feature (MySQL). The contract is src/ipc/db.ts.
+//! Tauri commands for the database feature (MySQL and Trino). The contract is src/ipc/db.ts.
 //! All logic lives in `kestrel-db`. These functions only pass arguments on.
 //! Every command is async, so no database call blocks the main thread.
 //! Sessions belong to the window that opened them (owner = window label).
@@ -6,7 +6,7 @@
 use super::{Handler, SetupResult};
 use kestrel_common::Result;
 use kestrel_db::{
-    ColumnInfo, ConnectArgs, ConnectionConfig, DbManager, DbObjects, ExecResult, IdeaList, IndexInfo, ObjectKind, SessionInfo, TestResult, TxState,
+    ColumnInfo, ConnectArgs, ConnectionConfig, DbManager, DbObjects, ExecResult, ExportOptions, ExportResult, IdeaList, IndexInfo, ObjectKind, SessionInfo, TestResult, TxState,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -92,6 +92,12 @@ async fn db_completion_schema(window: Window, db: Db<'_>, session_id: String, da
     db.completion_schema(window.label(), &session_id, &database).await
 }
 
+/// Runs one read statement and writes all rows into a CSV file (`<path>.part`, then renamed).
+#[tauri::command]
+async fn db_export_csv(window: Window, db: Db<'_>, session_id: String, sql: String, path: String, options: Option<ExportOptions>) -> Result<ExportResult> {
+    db.export_csv(window.label(), &session_id, &sql, &path, options.unwrap_or_default()).await
+}
+
 /// Reads the IntelliJ data sources of a project folder. The list has no passwords.
 #[tauri::command]
 async fn db_idea_list(project_root: String) -> Result<IdeaList> {
@@ -132,6 +138,7 @@ pub fn handler() -> Handler {
         db_indexes,
         db_ddl,
         db_completion_schema,
+        db_export_csv,
         db_idea_list,
         db_password_set,
         db_password_delete,

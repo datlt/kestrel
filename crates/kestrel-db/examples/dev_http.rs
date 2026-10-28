@@ -11,7 +11,7 @@
 //! it has no login, so anything that reaches the port can run SQL.
 
 use kestrel_common::{Error, Result};
-use kestrel_db::{ConnectArgs, DbManager, ObjectKind};
+use kestrel_db::{ConnectArgs, DbManager, ExportOptions, ObjectKind};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -190,6 +190,10 @@ async fn invoke(m: &DbManager, cmd: &str, a: Value) -> Result<Value> {
             out(m.ddl(OWNER, &arg::<String>(&a, "sessionId")?, &arg::<String>(&a, "database")?, &arg::<String>(&a, "name")?, kind).await?)
         }
         "db_completion_schema" => out(m.completion_schema(OWNER, &arg::<String>(&a, "sessionId")?, &arg::<String>(&a, "database")?).await?),
+        "db_export_csv" => {
+            let options: Option<ExportOptions> = arg(&a, "options")?;
+            out(m.export_csv(OWNER, &arg::<String>(&a, "sessionId")?, &arg::<String>(&a, "sql")?, &arg::<String>(&a, "path")?, options.unwrap_or_default()).await?)
+        }
         "db_idea_list" => {
             let root: String = arg(&a, "projectRoot")?;
             out(tokio::task::spawn_blocking(move || kestrel_db::idea_list(std::path::Path::new(&root))).await.map_err(|e| Error::internal(e.to_string()))??)

@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 kestrel-common = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 parking_lot = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
@@ -16,6 +16,8 @@ mysql_async = { version = "0.37", default-features = false, features = ["default
 # macOS Keychain, Windows Credential Manager, Linux Secret Service.
 keyring = "4"
 libc = "0.2"
+# Small blocking HTTP client for the Trino protocol (rustls with the `ring` provider, system CA roots).
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 # Reads the XML files of IntelliJ (.idea/dataSources.xml).
 quick-xml = "0.42"
 

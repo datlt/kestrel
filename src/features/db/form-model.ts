@@ -1,14 +1,21 @@
 // Data and checks of the connection form. No DOM code, so tests can import it.
 
-import type { DbConnectionConfig, DbSslMode } from '../../ipc/db';
+import type { DbConnectionConfig, DbDriver, DbSslMode, DbTrinoAuth } from '../../ipc/db';
 
 /** What the user types. Numbers stay as text until the form is checked. */
 export interface ConnDraft {
   id: string;
   name: string;
+  /** Database engine. */
+  driver: DbDriver;
+  /** Trino only. */
+  catalog: string;
+  /** Trino only: how to log in. */
+  trinoAuth: DbTrinoAuth;
   host: string;
   port: string;
   user: string;
+  /** MySQL: the default database. Trino: the schema. */
   database: string;
   ssl: DbSslMode;
   readOnly: boolean;
@@ -25,10 +32,58 @@ export interface ConnDraft {
 
 export type DraftField = keyof ConnDraft;
 
+/** Port of a new connection: MySQL 3306. Trino 443 with TLS, 8080 without. */
+export function defaultPort(driver: DbDriver, ssl: DbSslMode): string {
+  if (driver !== 'trino') return '3306';
+  return ssl === 'disabled' ? '8080' : '443';
+}
+
+/** Login of a new Trino connection: a password over TLS, only the user name over plain http. */
+export function defaultTrinoAuth(ssl: DbSslMode): DbTrinoAuth {
+  return ssl === 'disabled' ? 'none' : 'password';
+}
+
+/** The login a Trino config uses. An unset value follows the TLS setting (as the Rust side does). */
+export function effectiveTrinoAuth(c: Pick<DbConnectionConfig, 'ssl' | 'trinoAuth'>): DbTrinoAuth {
+  return c.trinoAuth ?? defaultTrinoAuth(c.ssl);
+}
+
+/** The server may ask for a password for this connection (MySQL, or Trino with the password login). */
+export function usesPassword(c: Pick<DbConnectionConfig, 'driver' | 'ssl' | 'trinoAuth'>): boolean {
+  return c.driver !== 'trino' || effectiveTrinoAuth(c) === 'password';
+}
+
+/**
+ * Changes the engine of a draft. The port and the login change too, but only
+ * while they still have the default of the old settings. A value the user typed stays.
+ */
+export function withDriver(d: ConnDraft, driver: DbDriver): ConnDraft {
+  if (driver === d.driver) return d;
+  const next: ConnDraft = { ...d, driver };
+  // Trino knows only https (TLS) and http (no TLS).
+  if (driver === 'trino' && next.ssl === 'preferred') next.ssl = 'required';
+  if (d.port.trim() === '' || d.port === defaultPort(d.driver, d.ssl)) next.port = defaultPort(driver, next.ssl);
+  if (driver === 'trino') next.trinoAuth = defaultTrinoAuth(next.ssl);
+  return next;
+}
+
+/** Changes the TLS setting of a draft. For Trino the port and the login follow it while they are the defaults. */
+export function withSsl(d: ConnDraft, ssl: DbSslMode): ConnDraft {
+  const next: ConnDraft = { ...d, ssl };
+  if (d.driver === 'trino') {
+    if (d.port.trim() === '' || d.port === defaultPort('trino', d.ssl)) next.port = defaultPort('trino', ssl);
+    if (d.trinoAuth === defaultTrinoAuth(d.ssl)) next.trinoAuth = defaultTrinoAuth(ssl);
+  }
+  return next;
+}
+
 export function blankDraft(id: string): ConnDraft {
   return {
     id,
     name: '',
+    driver: 'mysql',
+    catalog: '',
+    trinoAuth: 'password',
     host: '127.0.0.1',
     port: '3306',
     user: '',
@@ -51,11 +106,15 @@ export function draftFromConfig(c: DbConnectionConfig): ConnDraft {
   return {
     id: c.id,
     name: c.name,
+    driver: c.driver ?? 'mysql',
+    catalog: c.catalog ?? '',
+    trinoAuth: effectiveTrinoAuth(c),
     host: c.host,
     port: String(c.port),
     user: c.user,
     database: c.database ?? '',
-    ssl: c.ssl,
+    // Trino knows only https and http, so `preferred` means https.
+    ssl: c.driver === 'trino' && c.ssl === 'preferred' ? 'required' : c.ssl,
     readOnly: c.readOnly,
     production: c.production,
     color: c.color ?? '',
@@ -83,11 +142,12 @@ export function validateDraft(d: ConnDraft): DraftErrors {
   const port = wholeNumber(d.port);
   if (port === null || port < 1 || port > 65535) e.port = 'The port is a number from 1 to 65535.';
   if (!d.user.trim()) e.user = 'Enter the user name.';
+  if (d.driver === 'trino' && !d.catalog.trim()) e.catalog = 'Enter the catalog, for example hive.';
   if (d.connectTimeoutSec.trim()) {
     const t = wholeNumber(d.connectTimeoutSec);
     if (t === null || t < 1 || t > 600) e.connectTimeoutSec = 'Use a number of seconds from 1 to 600.';
   }
-  if (d.sshEnabled) {
+  if (d.sshEnabled && d.driver !== 'trino') {
     if (!d.sshHost.trim()) e.sshHost = 'Enter the SSH host.';
     if (d.sshPort.trim()) {
       const p = wholeNumber(d.sshPort);
@@ -100,15 +160,18 @@ export function validateDraft(d: ConnDraft): DraftErrors {
 /** Builds the stored config. Call it only when `validateDraft` found no errors. */
 export function configFromDraft(d: ConnDraft): DbConnectionConfig {
   const opt = (s: string) => (s.trim() ? s.trim() : null);
+  const trino = d.driver === 'trino';
   const cfg: DbConnectionConfig = {
     id: d.id,
     name: d.name.trim(),
+    // A MySQL config has no engine fields, as before.
+    ...(trino ? { driver: 'trino' as const, catalog: opt(d.catalog), trinoAuth: d.trinoAuth } : {}),
     host: d.host.trim(),
     port: Number(d.port.trim()),
     user: d.user.trim(),
     database: opt(d.database),
     ssl: d.ssl,
-    ssh: d.sshEnabled
+    ssh: d.sshEnabled && !trino
       ? {
           host: d.sshHost.trim(),
           port: d.sshPort.trim() ? Number(d.sshPort.trim()) : null,

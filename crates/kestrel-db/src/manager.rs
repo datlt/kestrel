@@ -5,9 +5,11 @@
 //! at a time: the connection sits behind a mutex that we only `try_lock`, and a
 //! second call while it is locked fails with `db_busy`.
 
-use crate::idea;
 use crate::error::{self, Phase, is_lost, map_error};
+use crate::export::{BOM, CsvOptions, Dialect, PartGuard, check_read_only, check_target, part_path, push_row};
+use crate::idea;
 use crate::schema;
+use crate::trino::{TrinoOptions, TrinoSession};
 use crate::tunnel::{TunnelKey, Tunnels, tunnel_key};
 use crate::types::*;
 use crate::values::{describe_column, format_value};
@@ -22,6 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::OwnedMutexGuard;
 
 const DEFAULT_CONNECT_TIMEOUT_SEC: u64 = 10;
@@ -136,10 +139,30 @@ impl Session {
     }
 }
 
+/// A session of either engine.
+#[derive(Clone)]
+enum Handle {
+    Mysql(Arc<Session>),
+    Trino(Arc<TrinoSession>),
+}
+
 struct Inner {
-    sessions: Mutex<HashMap<(String, String), Arc<Session>>>,
+    sessions: Mutex<HashMap<(String, String), Handle>>,
     tunnels: Tunnels,
     next_id: AtomicU64,
+    /// OAuth2 tokens of Trino connections, by connection id. They live until the app quits.
+    trino_tokens: Arc<Mutex<HashMap<String, String>>>,
+    trino_options: TrinoOptions,
+}
+
+/// Runs blocking Trino work on a thread of the blocking pool.
+async fn blocking<T: Send + 'static>(t: &Arc<TrinoSession>, f: impl FnOnce(&Arc<TrinoSession>) -> Result<T> + Send + 'static) -> Result<T> {
+    let t = t.clone();
+    tokio::task::spawn_blocking(move || f(&t)).await.map_err(|e| Error::internal(format!("Trino task failed: {e}")))?
+}
+
+fn not_for_trino(what: &str) -> Error {
+    Error::invalid(format!("Trino sessions run in auto-commit mode: {what} is not available"))
 }
 
 /// All database sessions of the app. Cheap to clone.
@@ -283,16 +306,38 @@ pub fn first_keyword(sql: &str) -> String {
 
 impl DbManager {
     pub fn new() -> Self {
-        DbManager { inner: Arc::new(Inner { sessions: Mutex::new(HashMap::new()), tunnels: Tunnels::default(), next_id: AtomicU64::new(1) }) }
+        Self::with_trino_options(TrinoOptions::default())
     }
 
-    fn session(&self, owner: &str, id: &str) -> Result<Arc<Session>> {
+    /// Like `new`, with other settings for the Trino client (tests use this to avoid a real browser).
+    pub fn with_trino_options(trino_options: TrinoOptions) -> Self {
+        DbManager {
+            inner: Arc::new(Inner {
+                sessions: Mutex::new(HashMap::new()),
+                tunnels: Tunnels::default(),
+                next_id: AtomicU64::new(1),
+                trino_tokens: Arc::new(Mutex::new(HashMap::new())),
+                trino_options,
+            }),
+        }
+    }
+
+    fn handle(&self, owner: &str, id: &str) -> Result<Handle> {
         self.inner
             .sessions
             .lock()
             .get(&(owner.to_string(), id.to_string()))
             .cloned()
             .ok_or_else(|| Error::new(codes::DB_LOST, "this database session does not exist (any more). Connect again"))
+    }
+
+    /// Builds a Trino client for a connection. The password comes from the argument or the keychain.
+    async fn trino_client(&self, args: &ConnectArgs) -> Result<Arc<TrinoSession>> {
+        let password = match &args.password {
+            Some(p) => p.clone(),
+            None => resolve_password(&args.config).await?,
+        };
+        TrinoSession::new(&args.config, &password, self.inner.trino_tokens.clone(), self.inner.trino_options.clone())
     }
 
     // --- Connect and disconnect -------------------------------------------
@@ -335,6 +380,12 @@ impl DbManager {
 
     /// Connects, reads the server version, disconnects.
     pub async fn test(&self, owner: &str, args: ConnectArgs) -> Result<TestResult> {
+        if args.config.driver == Driver::Trino {
+            let client = self.trino_client(&args).await?;
+            let init = args.config.init_sql.clone();
+            let version = blocking(&client, move |t| t.check(init.as_deref())).await?;
+            return Ok(TestResult { server_version: version });
+        }
         // The test tunnel has its own key, so a running session never shares it.
         let test_owner = format!("{owner}#test");
         let mut opened = self.open(&test_owner, &args).await?;
@@ -348,6 +399,9 @@ impl DbManager {
     }
 
     pub async fn connect(&self, owner: &str, args: ConnectArgs) -> Result<SessionInfo> {
+        if args.config.driver == Driver::Trino {
+            return self.connect_trino(owner, args).await;
+        }
         let mut opened = self.open(owner, &args).await?;
         let info = opened
             .conn
@@ -381,15 +435,36 @@ impl DbManager {
             running: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
         });
-        self.inner.sessions.lock().insert((owner.to_string(), id.clone()), session.clone());
+        self.inner.sessions.lock().insert((owner.to_string(), id.clone()), Handle::Mysql(session.clone()));
         Ok(SessionInfo {
             session_id: id,
+            driver: Driver::Mysql,
+            supports_transactions: true,
             server_version: version,
             connection_id,
             database,
             autocommit: state.autocommit,
             read_only: session.read_only,
         })
+    }
+
+    async fn connect_trino(&self, owner: &str, args: ConnectArgs) -> Result<SessionInfo> {
+        let client = self.trino_client(&args).await?;
+        let init = args.config.init_sql.clone();
+        let version = blocking(&client, move |t| t.check(init.as_deref())).await?;
+        let id = format!("s{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
+        let info = SessionInfo {
+            session_id: id.clone(),
+            driver: Driver::Trino,
+            supports_transactions: false,
+            server_version: version,
+            connection_id: 0,
+            database: client.schema(),
+            autocommit: true,
+            read_only: args.config.read_only,
+        };
+        self.inner.sessions.lock().insert((owner.to_string(), id), Handle::Trino(client));
+        Ok(info)
     }
 
     /// Closes a session. A session that does not exist is not an error.
@@ -401,7 +476,15 @@ impl DbManager {
         Ok(())
     }
 
-    async fn close_session(&self, sess: Arc<Session>) {
+    async fn close_session(&self, handle: Handle) {
+        let sess = match handle {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                // Trino keeps no connection. Stopping the running statement is enough.
+                let _ = tokio::task::spawn_blocking(move || t.cancel()).await;
+                return;
+            }
+        };
         if sess.running.load(Ordering::SeqCst) {
             sess.cancel_requested.store(true, Ordering::SeqCst);
             let _ = sess.kill_query().await;
@@ -420,7 +503,7 @@ impl DbManager {
 
     /// Closes all sessions of an owner (a window).
     pub async fn close_owner(&self, owner: &str) {
-        let list: Vec<Arc<Session>> = {
+        let list: Vec<Handle> = {
             let mut map = self.inner.sessions.lock();
             let keys: Vec<_> = map.keys().filter(|(o, _)| o == owner).cloned().collect();
             keys.into_iter().filter_map(|k| map.remove(&k)).collect()
@@ -430,12 +513,12 @@ impl DbManager {
 
     /// Closes every session and tunnel. For app exit.
     pub async fn close_all(&self) {
-        let list: Vec<Arc<Session>> = self.inner.sessions.lock().drain().map(|(_, s)| s).collect();
+        let list: Vec<Handle> = self.inner.sessions.lock().drain().map(|(_, s)| s).collect();
         self.close_all_of(list).await;
         self.inner.tunnels.kill_all_now();
     }
 
-    async fn close_all_of(&self, list: Vec<Arc<Session>>) {
+    async fn close_all_of(&self, list: Vec<Handle>) {
         let mut set = tokio::task::JoinSet::new();
         for sess in list {
             let me = self.clone();
@@ -457,7 +540,13 @@ impl DbManager {
     // --- Statements -------------------------------------------------------
 
     pub async fn execute(&self, owner: &str, session_id: &str, sql: &str, max_rows: usize) -> Result<ExecResult> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let sql = sql.to_string();
+                return blocking(&t, move |t| t.execute(&sql, max_rows)).await;
+            }
+        };
         let mut guard = sess.acquire()?;
         let started = Instant::now();
         let run = run_statement(&sess, guard.conn()?, sql, max_rows, started).await;
@@ -502,7 +591,13 @@ impl DbManager {
 
     /// Stops the running statement. Does nothing when no statement runs.
     pub async fn cancel(&self, owner: &str, session_id: &str) -> Result<()> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                tokio::task::spawn_blocking(move || t.cancel()).await.map_err(|e| Error::internal(e.to_string()))?;
+                return Ok(());
+            }
+        };
         if !sess.running.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -511,7 +606,10 @@ impl DbManager {
     }
 
     async fn simple(&self, owner: &str, session_id: &str, sql: &str) -> Result<TxState> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(_) => return Err(not_for_trino("changing auto-commit, COMMIT and ROLLBACK")),
+        };
         let mut guard = sess.acquire()?;
         let r = guard.conn()?.query_drop(sql).await;
         match r {
@@ -544,7 +642,13 @@ impl DbManager {
 
     /// `USE <database>`.
     pub async fn use_database(&self, owner: &str, session_id: &str, database: &str) -> Result<()> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let db = database.to_string();
+                return blocking(&t, move |t| t.use_database(&db)).await;
+            }
+        };
         let mut guard = sess.acquire()?;
         let r = guard.conn()?.query_drop(format!("USE {}", schema::quote_ident(database))).await;
         sess.finish(r)?;
@@ -556,35 +660,60 @@ impl DbManager {
     // --- Schema -----------------------------------------------------------
 
     pub async fn databases(&self, owner: &str, session_id: &str) -> Result<Vec<String>> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => return blocking(&t, |t| t.databases()).await,
+        };
         let mut guard = sess.acquire()?;
         let r = schema::databases(guard.conn()?).await;
         sess.finish(r)
     }
 
     pub async fn objects(&self, owner: &str, session_id: &str, database: &str) -> Result<DbObjects> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let db = database.to_string();
+                return blocking(&t, move |t| t.objects(&db)).await;
+            }
+        };
         let mut guard = sess.acquire()?;
         let r = schema::objects(guard.conn()?, database).await;
         sess.finish(r)
     }
 
     pub async fn columns(&self, owner: &str, session_id: &str, database: &str, table: &str) -> Result<Vec<ColumnInfo>> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let (db, table) = (database.to_string(), table.to_string());
+                return blocking(&t, move |t| t.columns(&db, &table)).await;
+            }
+        };
         let mut guard = sess.acquire()?;
         let r = schema::columns(guard.conn()?, database, table).await;
         sess.finish(r)
     }
 
     pub async fn indexes(&self, owner: &str, session_id: &str, database: &str, table: &str) -> Result<Vec<IndexInfo>> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            // Trino has no indexes.
+            Handle::Trino(_) => return Ok(Vec::new()),
+        };
         let mut guard = sess.acquire()?;
         let r = schema::indexes(guard.conn()?, database, table).await;
         sess.finish(r)
     }
 
     pub async fn ddl(&self, owner: &str, session_id: &str, database: &str, name: &str, kind: ObjectKind) -> Result<String> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let (db, name) = (database.to_string(), name.to_string());
+                return blocking(&t, move |t| t.ddl(&db, &name, kind)).await;
+            }
+        };
         let mut guard = sess.acquire()?;
         let r = schema::ddl(guard.conn()?, database, name, kind).await;
         match sess.finish(r)? {
@@ -594,10 +723,51 @@ impl DbManager {
     }
 
     pub async fn completion_schema(&self, owner: &str, session_id: &str, database: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
-        let sess = self.session(owner, session_id)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let db = database.to_string();
+                return blocking(&t, move |t| t.completion_schema(&db)).await;
+            }
+        };
         let mut guard = sess.acquire()?;
         let r = schema::completion_schema(guard.conn()?, database).await;
         sess.finish(r)
+    }
+
+    // --- Export -----------------------------------------------------------
+
+    /// Runs one read statement and writes ALL rows into a CSV file. The rows go
+    /// to `<path>.part` as they arrive. At the end the file gets its real name.
+    /// On an error or a cancel the part file is deleted.
+    pub async fn export_csv(&self, owner: &str, session_id: &str, sql: &str, path: &str, options: ExportOptions) -> Result<ExportResult> {
+        let opts = CsvOptions::resolve(&options)?;
+        let sess = match self.handle(owner, session_id)? {
+            Handle::Mysql(s) => s,
+            Handle::Trino(t) => {
+                let (sql, path) = (sql.to_string(), path.to_string());
+                return blocking(&t, move |t| t.export_csv(&sql, &path, &options)).await;
+            }
+        };
+        check_read_only(sql, Dialect::Mysql, &[])?;
+        let target = check_target(path)?;
+        let mut guard = sess.acquire()?;
+        let started = Instant::now();
+        let run = export_stream(&sess, guard.conn()?, sql, &target, opts, started).await;
+        match run {
+            Ok(done) => {
+                sess.sync_state(guard.conn()?);
+                Ok(done)
+            }
+            Err(e) => {
+                if e.code() != codes::DB_LOST {
+                    if let Ok(c) = guard.conn() {
+                        sess.refresh_state(c).await;
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 
     // --- Passwords --------------------------------------------------------
@@ -631,6 +801,66 @@ async fn prepare(conn: &mut Conn, cfg: &ConnectionConfig) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+/// Streams the rows of one statement into `<target>.part`, then renames the file.
+async fn export_stream(sess: &Arc<Session>, conn: &mut Conn, sql: &str, target: &std::path::Path, opts: CsvOptions, started: Instant) -> Result<ExportResult> {
+    let part = part_path(target);
+    let file = tokio::fs::File::create(&part).await?;
+    // The guard is declared first, so the file is closed before the guard removes it.
+    let mut part_guard = PartGuard::new(part.clone());
+    let mut out = tokio::io::BufWriter::with_capacity(256 * 1024, file);
+    let mut bytes: u64 = 0;
+    let mut rows: u64 = 0;
+    if opts.bom {
+        out.write_all(BOM).await?;
+        bytes += BOM.len() as u64;
+    }
+    let mut qr = conn.query_iter(sql).await.map_err(|e| sess.fail(e))?;
+    let mut buf: Vec<u8> = Vec::with_capacity(8192);
+    if let Some(cols) = qr.columns() {
+        let columns: Vec<Column> = cols.iter().map(describe_column).collect();
+        let binary: Vec<bool> = columns.iter().map(|c| c.binary).collect();
+        if opts.header {
+            push_row(&mut buf, opts.delimiter, columns.iter().map(|c| Some(c.name.as_str())));
+            out.write_all(&buf).await?;
+            bytes += buf.len() as u64;
+        }
+        loop {
+            let next = qr.next().await;
+            let row = match next {
+                Ok(r) => r,
+                Err(e) => return Err(sess.fail(e)),
+            };
+            let Some(row) = row else { break };
+            if sess.cancel_requested.load(Ordering::SeqCst) {
+                // `cancel` already sent KILL QUERY. Read what is on the way.
+                let _ = qr.drop_result().await;
+                return Err(Error::cancelled());
+            }
+            let values: Vec<Option<String>> = row.unwrap().iter().zip(&binary).map(|(v, b)| format_value(v, *b)).collect();
+            buf.clear();
+            push_row(&mut buf, opts.delimiter, values.iter().map(|v| v.as_deref()));
+            if let Err(e) = out.write_all(&buf).await {
+                let _ = sess.kill_query().await;
+                let _ = qr.drop_result().await;
+                return Err(e.into());
+            }
+            bytes += buf.len() as u64;
+            rows += 1;
+        }
+    }
+    // A later result set (it should not exist for a read statement) is read and dropped.
+    qr.drop_result().await.map_err(|e| sess.fail(e))?;
+    if sess.cancel_requested.load(Ordering::SeqCst) {
+        return Err(Error::cancelled());
+    }
+    out.flush().await?;
+    out.shutdown().await?;
+    drop(out);
+    tokio::fs::rename(&part, target).await?;
+    part_guard.disarm();
+    Ok(ExportResult { rows, bytes, elapsed_ms: started.elapsed().as_millis() as u64 })
 }
 
 struct Done {

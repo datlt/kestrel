@@ -42,6 +42,9 @@ pub mod codes {
     pub const DB_BUSY: &str = "db_busy";
     /// The database connection was lost. The session must reconnect.
     pub const DB_LOST: &str = "db_lost";
+    /// The server refused the login (MySQL error 1045, Trino HTTP 401).
+    /// The frontend asks for the password and tries again.
+    pub const DB_AUTH: &str = "db_auth";
 }
 
 impl Error {

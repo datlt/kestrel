@@ -586,7 +586,7 @@ Settings changed in round 2 (core/settings.ts): `files.autoSave` default
 default `true`; new `explorer.compactFolders` (true) and `preview.csvMode`
 (`preview`).
 
-## 9. Database feature (MySQL)
+## 9. Database feature (MySQL and Trino)
 
 Goal: look at and change data in remote MySQL databases from the editor:
 run queries, see results, control transactions, browse the schema, read DDL.
@@ -595,7 +595,8 @@ It must be safe for production databases.
 ### 9.1 Contract and ownership
 
 `src/ipc/db.ts` is the contract (integrator). Error codes: `db_error`,
-`db_connect`, `db_busy`, `db_lost`, `cancelled`.
+`db_connect`, `db_busy`, `db_lost`, `db_auth` (login refused: MySQL 1045 or
+Trino 401), `cancelled`.
 
 | Area | Owner | Files |
 |------|-------|-------|
@@ -626,6 +627,18 @@ password are in the script).
   `db_connect` error.
 - Passwords: `keyring` crate (macOS Keychain, Windows Credential Manager,
   Linux Secret Service), service `dev.kestrel.editor.db`.
+- Trino (`src/trino.rs`): the Trino REST protocol over `ureq` (blocking, run
+  in `spawn_blocking`; rustls with `ring`, system CA roots). Login `none`
+  (only `X-Trino-User`), `password` (HTTP Basic, https only) or `oauth2`
+  (open `x_redirect_server` in the browser, poll `x_token_server` for up to
+  3 minutes; the token is kept per connection id). Sessions always
+  auto-commit (`supportsTransactions: false`). No SSH tunnel. A read-only
+  Trino connection refuses statements other than SELECT, WITH, SHOW,
+  DESCRIBE, EXPLAIN, VALUES, TABLE and USE on the client.
+- CSV export (`src/export.rs`, `db_export_csv`): runs one read-only statement
+  and streams every row into a file (UTF-8 BOM, header row) with no row
+  limit. It writes to a temp file next to the target and renames it at the
+  end; on error or cancel it removes the temp file.
 - `crates/kestrel-db/examples/dev_http.rs`: a dev-only HTTP server
   (127.0.0.1:1435) that exposes the same `DbManager` as `POST /invoke/<cmd>`
   JSON, so the browser dev bridge can forward `db_*` commands to real Rust
@@ -637,8 +650,10 @@ password are in the script).
   badge, read-only badge) → databases → Tables / Views / Procedures /
   Functions / Triggers → table → columns (type, key, nullable) and indexes.
   The tree uses its own "meta" session per connection. Context menu: New SQL
-  Console, Select Top 100, Show DDL, Copy Name, Refresh, Edit / Duplicate /
-  Delete Connection.
+  Console, Select Top 100, Generate SELECT (opens a console with
+  `SELECT * FROM <table> LIMIT 100`), Copy SELECT, Show DDL, Copy Name,
+  Refresh, Edit / Duplicate / Delete Connection. Trino connections show only
+  Tables and Views.
 - Connection form tab (`db-connection`): all fields of `DbConnectionConfig`,
   password with "save in keychain", Test button. Stored with
   `ctx.settings.update({ 'db.connections': ... })`.
@@ -646,11 +661,12 @@ password are in the script).
   run; restored tabs reconnect on demand). Toolbar: connection and database
   pickers, Run (Mod-Enter: selection or statement at the cursor), Run Script
   (Mod-Shift-Enter), Cancel, Auto-commit switch, Commit, Rollback,
-  transaction badge. Editor: `@codemirror/lang-sql` MySQL dialect with schema
+  transaction badge (Trino consoles hide the transaction controls). Editor: `@codemirror/lang-sql` MySQL dialect with schema
   completion (`db_completion_schema`). Results below (resizable): one tab per
   result, virtualized grid (sticky header, row numbers, NULL greyed, numbers
   right, resizable columns, client sort, cell select and copy, copy rows as
-  TSV / JSON / INSERT, export CSV, cell viewer for long text and JSON), plus a
+  TSV / JSON / INSERT, cell viewer for long text and JSON), a Download CSV
+  button (rows shown, or all rows through `db_export_csv`), plus a
   Messages tab (time, statement, rows, elapsed, errors). Console text is
   saved with the session.
 - `.sql` files in the workspace: Mod-Enter runs the statement at the cursor
@@ -684,7 +700,10 @@ and the IntelliJ application SSH configs. The JDBC URL can hold the user and
 the password (`jdbc:mysql://user:pass@host:port/db`). Passwords stay in Rust.
 The Database view shows an "IntelliJ" group for the open folder (setting
 `db.idea.enabled`) and connects its MySQL sources when the view opens
-(`db.idea.autoConnect`). Names with `real`, `prod` or `live` count as
+(`db.idea.autoConnect`). MySQL, MariaDB and Trino sources are supported;
+Trino sources keep the IntelliJ catalog and log in with a password when they
+have a user and use https, else with the user name only. For a browser
+login, use "Copy to My Connections" and set the login to `oauth2`. Names with `real`, `prod` or `live` count as
 production; the IntelliJ read-only flag makes the connection read-only.
 
 ### 10.3 Web tabs

@@ -471,10 +471,10 @@ async fn wrong_password_and_bad_targets_are_db_connect() {
     let mut a = args(&e, json!({}));
     a.password = Some("definitely-wrong".into());
     let err = m.connect(OWNER, a.clone()).await.unwrap_err();
-    assert_eq!(code_of(&err), "db_connect");
+    assert_eq!(code_of(&err), "db_auth");
     assert!(err.to_string().starts_with("1045 (28000): "), "{err}");
     let err = m.test(OWNER, a).await.unwrap_err();
-    assert_eq!(code_of(&err), "db_connect");
+    assert_eq!(code_of(&err), "db_auth");
 
     let err = m.connect(OWNER, args(&e, json!({ "database": "no_such_db" }))).await.unwrap_err();
     assert_eq!(code_of(&err), "db_connect");
@@ -770,4 +770,140 @@ async fn keychain_round_trip() {
     assert!(!m.password_exists(&id).await.unwrap());
     // Deleting twice is fine.
     m.password_delete(&id).await.unwrap();
+}
+
+// --- CSV export ------------------------------------------------------------
+
+/// A small RFC 4180 reader for the tests. Returns the rows as lists of fields.
+fn parse_csv(text: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if quoted {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else {
+            match c {
+                '"' => quoted = true,
+                ',' => row.push(std::mem::take(&mut field)),
+                '\r' => {
+                    assert_eq!(chars.next(), Some('\n'), "a bare CR outside quotes");
+                    row.push(std::mem::take(&mut field));
+                    rows.push(std::mem::take(&mut row));
+                }
+                other => field.push(other),
+            }
+        }
+    }
+    assert!(!quoted && field.is_empty() && row.is_empty(), "the file must end with CRLF");
+    rows
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_csv_streams_50k_rows() {
+    let e = require_env!();
+    let m = DbManager::new();
+    let s = connect(&m, &e).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.csv");
+    let sql = "SELECT id, path, CONCAT('a,\"b\"', CHAR(10 USING utf8mb4), 'c') AS tricky, NULL AS n, 'こんにちは Hà Nội' AS u \
+               FROM kestrel_logs.access_log ORDER BY id";
+    let r = m.export_csv(OWNER, &s.session_id, sql, path.to_str().unwrap(), ExportOptions::default()).await.unwrap();
+    assert_eq!(r.rows, 50_000);
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(r.bytes, bytes.len() as u64);
+    assert!(!dir.path().join("out.csv.part").exists());
+    assert!(bytes.starts_with(b"\xEF\xBB\xBF"));
+    let rows = parse_csv(std::str::from_utf8(&bytes[3..]).unwrap());
+    assert_eq!(rows.len(), 50_001);
+    assert_eq!(rows[0], ["id", "path", "tricky", "n", "u"]);
+    assert_eq!(rows[1][0], "1");
+    assert_eq!(rows[1][2], "a,\"b\"\nc");
+    assert_eq!(rows[1][3], "");
+    assert_eq!(rows[1][4], "こんにちは Hà Nội");
+    assert_eq!(rows[50_000][0], "50000");
+    // The raw text has the quoted form.
+    assert!(String::from_utf8_lossy(&bytes).contains("\"a,\"\"b\"\"\nc\""));
+    // The session still works.
+    assert_eq!(cell(&run(&m, &s, "SELECT 1").await, 0, 0), Some("1".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_csv_options_and_overwrite() {
+    let e = require_env!();
+    let m = DbManager::new();
+    let s = connect(&m, &e).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("o.csv");
+    std::fs::write(&path, "old").unwrap();
+    let o = ExportOptions { delimiter: Some(";".into()), header: Some(false), bom: Some(false) };
+    let r = m.export_csv(OWNER, &s.session_id, "SELECT 1 AS a, 'x;y' AS b UNION ALL SELECT 2, NULL", path.to_str().unwrap(), o).await.unwrap();
+    assert_eq!(r.rows, 2);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "1;\"x;y\"\r\n2;\r\n");
+    // An empty result keeps the header only.
+    let r = m.export_csv(OWNER, &s.session_id, "SELECT 1 AS a WHERE 1 = 0", path.to_str().unwrap(), ExportOptions { bom: Some(false), ..Default::default() }).await.unwrap();
+    assert_eq!(r.rows, 0);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\r\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_csv_refuses_writes_and_bad_paths() {
+    let e = require_env!();
+    let m = DbManager::new();
+    let s = connect(&m, &e).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("w.csv");
+    let p = path.to_str().unwrap();
+    for sql in ["INSERT INTO kestrel_demo.titles (id) VALUES (1)", "DROP TABLE x", "SELECT 1; DELETE FROM kestrel_demo.titles", "CALL p()"] {
+        let err = m.export_csv(OWNER, &s.session_id, sql, p, ExportOptions::default()).await.unwrap_err();
+        assert_eq!(code_of(&err), "invalid_input", "{sql}");
+    }
+    assert!(!path.exists() && !dir.path().join("w.csv.part").exists());
+    let err = m.export_csv(OWNER, &s.session_id, "SELECT 1", "relative.csv", ExportOptions::default()).await.unwrap_err();
+    assert_eq!(code_of(&err), "invalid_input");
+    // A server error removes the part file.
+    let err = m.export_csv(OWNER, &s.session_id, "SELECT * FROM no_such_table_x", p, ExportOptions::default()).await.unwrap_err();
+    assert_eq!(code_of(&err), "db_error");
+    assert!(!path.exists() && !dir.path().join("w.csv.part").exists());
+    assert_eq!(cell(&run(&m, &s, "SELECT 1").await, 0, 0), Some("1".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_csv_cancel_removes_the_part_file() {
+    let e = require_env!();
+    let m = DbManager::new();
+    let s = connect(&m, &e).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.csv");
+    let part = dir.path().join("c.csv.part");
+    let (m2, sid, p) = (m.clone(), s.session_id.clone(), path.to_str().unwrap().to_string());
+    let task = tokio::spawn(async move {
+        m2.export_csv(OWNER, &sid, "SELECT id, SLEEP(0.01) FROM kestrel_logs.access_log", &p, ExportOptions::default()).await
+    });
+    // Wait until the export has started and the part file exists.
+    let t = Instant::now();
+    while !part.exists() && t.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(part.exists(), "the part file should exist while the export runs");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // A second statement is refused while the export runs.
+    let busy = m.execute(OWNER, &s.session_id, "SELECT 1", 10).await.unwrap_err();
+    assert_eq!(code_of(&busy), "db_busy");
+    m.cancel(OWNER, &s.session_id).await.unwrap();
+    let err = task.await.unwrap().unwrap_err();
+    assert_eq!(code_of(&err), "cancelled");
+    assert!(!part.exists() && !path.exists());
+    assert_eq!(cell(&run(&m, &s, "SELECT 1").await, 0, 0), Some("1".into()));
 }

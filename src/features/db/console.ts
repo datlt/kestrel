@@ -4,7 +4,7 @@
 
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { MySQL, sql } from '@codemirror/lang-sql';
+import { MySQL, sql, StandardSQL } from '@codemirror/lang-sql';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
@@ -22,7 +22,7 @@ import { ResultsPane } from './results-pane';
 import { ResultsStore } from './results-store';
 import { splitStatements, statementAt, type Stmt } from './split';
 import { consoleTabId, consoleTitle, type ConsoleSpec } from './tabs';
-import { visibleDatabases } from './tree-model';
+import { appendLine, isTrinoConfig, visibleDatabases } from './tree-model';
 import './db.css';
 
 const MAX_SAVED_TEXT = 200_000;
@@ -47,6 +47,10 @@ export class ConsoleContent implements TabContent, RunTarget {
   private lastDb: string | null = null;
   private lastTitle = '';
   private databaseList: Promise<string[]> | null = null;
+  /** Table and column names for completion (from the last `loadSchema`). */
+  private schemaMap: Record<string, string[]> | undefined;
+  /** The SQL dialect that the editor uses now: `mysql` or `trino`. */
+  private dialectNow: 'mysql' | 'trino' = 'mysql';
 
   private readonly root = h('div', { class: 'db-console' });
   private readonly prodBar = h('div', { class: 'db-prodbar' }, 'PRODUCTION');
@@ -55,6 +59,7 @@ export class ConsoleContent implements TabContent, RunTarget {
   private readonly runBtn = iconBtn(Play, 'Run', 'Run the selection or the statement at the cursor', () => void this.run());
   private readonly scriptBtn = iconBtn(FastForward, 'Run Script', 'Run all statements one by one. It stops at the first error.', () => void this.runScript());
   private readonly cancelBtn = iconBtn(Square, 'Cancel', 'Stop the running statement', () => this.cancel());
+  private readonly txSep = h('span', { class: 'db-sep' });
   private readonly acBtn = h('button', { class: 'db-btn db-switch', type: 'button', role: 'switch', title: 'Auto-commit', onclick: () => void this.toggleAutocommit() }, 'Auto-commit');
   private readonly commitBtn = iconBtn(Check, 'Commit', 'Commit the transaction', () => void this.commit());
   private readonly rollbackBtn = iconBtn(Undo2, 'Rollback', 'Roll back the transaction', () => void this.rollback());
@@ -79,6 +84,7 @@ export class ConsoleContent implements TabContent, RunTarget {
     });
     this.runner.database = spec.database ?? this.config()?.database ?? null;
     this.lastDb = this.runner.database;
+    this.dialectNow = this.dialectName();
 
     // --- Editor ---
     const editorHost = h('div', { class: 'db-editor' });
@@ -114,7 +120,7 @@ export class ConsoleContent implements TabContent, RunTarget {
           highlightSelectionMatches(),
           search({ top: true }),
           keymap.of([...closeBracketsKeymap, ...completionKeymap, ...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
-          this.sqlComp.of(sql({ dialect: MySQL, upperCaseKeywords: true })),
+          this.sqlComp.of(this.sqlExtension()),
           ctx.editors.highlightExtension(),
           placeholder(`Write SQL here. ${ctx.commands.keyLabel('Mod-Enter')} runs the statement at the cursor.`),
           EditorView.contentAttributes.of({ spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off' }),
@@ -134,7 +140,7 @@ export class ConsoleContent implements TabContent, RunTarget {
       this.runBtn,
       this.scriptBtn,
       this.cancelBtn,
-      h('span', { class: 'db-sep' }),
+      this.txSep,
       this.acBtn,
       this.commitBtn,
       this.rollbackBtn,
@@ -151,18 +157,22 @@ export class ConsoleContent implements TabContent, RunTarget {
       ctx.bus.on('settings:changed', () => this.sync()),
       // A restored console on an IntelliJ connection finds its connection when the list arrives.
       hub.idea.onChange(() => this.sync()),
+      { dispose: hub.onLoginChange(() => this.sync()) },
     );
     this.sync();
+    if (spec.selectText) this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
     if (spec.autoRun) void this.runScript();
   }
 
   // --- TabContent ---------------------------------------------------------------------
 
   focus(): void {
+    this.hub.touchConsole(this.tabId);
     this.view.focus();
   }
 
   onShow(): void {
+    this.hub.touchConsole(this.tabId);
     this.hub.refreshStatus();
     this.pane.refresh();
     this.view.requestMeasure();
@@ -246,9 +256,10 @@ export class ConsoleContent implements TabContent, RunTarget {
     if (r.database) parts.push(r.database);
     let text = `DB: ${parts.join(' / ')}`;
     if (r.inTransaction) text += ' [TX]';
-    else if (!r.autocommit) text += ' [manual commit]';
+    else if (!r.autocommit && r.supportsTransactions()) text += ' [manual commit]';
+    const tx = r.supportsTransactions() ? ` ${r.inTransaction ? 'A transaction is open.' : 'No open transaction.'}` : '';
     const tooltip = r.connected
-      ? `Connected to ${name}, MySQL ${r.info?.serverVersion ?? ''}. ${r.inTransaction ? 'A transaction is open.' : 'No open transaction.'}`
+      ? `Connected to ${name}, ${this.engineName()} ${r.info?.serverVersion ?? ''}.${tx}`
       : `${name}: not connected. The console connects when you run a statement.`;
     return { text, tooltip };
   }
@@ -265,11 +276,34 @@ export class ConsoleContent implements TabContent, RunTarget {
     return s ? [s] : [];
   }
 
+  connectionId(): string | null {
+    return this.connId;
+  }
+
+  /** Adds `text` as a new last line, selects it and focuses the editor. It does not run it. */
+  appendSql(text: string): void {
+    const doc = this.view.state.doc.toString();
+    const a = appendLine(doc, text);
+    this.view.dispatch({
+      changes: { from: a.at, insert: a.insert },
+      selection: { anchor: a.from, head: a.to },
+      scrollIntoView: true,
+    });
+    this.hub.touchConsole(this.tabId);
+    this.view.focus();
+    // The tab can become visible just after this call. Focus once more then.
+    requestAnimationFrame(() => {
+      if (!this.disposed) this.view.focus();
+    });
+  }
+
   async run(): Promise<void> {
+    this.hub.touchConsole(this.tabId);
     await this.runner.run(this.currentStatements(), this.view.state.doc.toString());
   }
 
   async runScript(): Promise<void> {
+    this.hub.touchConsole(this.tabId);
     const text = this.view.state.doc.toString();
     await this.runner.run(splitStatements(text), text);
   }
@@ -309,18 +343,35 @@ export class ConsoleContent implements TabContent, RunTarget {
       h('span', { class: 'db-pick-text' }, c ? c.name : this.connId ? (isIdeaId(this.connId) ? '(IntelliJ connection)' : '(deleted connection)') : 'Choose connection'),
     );
     if (c?.readOnly) this.connBtn.append(h('span', { class: 'db-badge' }, 'READ-ONLY'));
-    this.dbBtn.replaceChildren(h('span', { class: 'db-pick-text' }, r.database ?? '(no database)'));
+    const trino = isTrinoConfig(c);
+    this.dbBtn.replaceChildren(h('span', { class: 'db-pick-text' }, r.database ?? (trino ? '(no schema)' : '(no database)')));
+    this.dbBtn.title = trino ? 'Choose the schema' : 'Choose the database';
+    // Trino has no transactions: hide the controls for them.
+    const tx = r.supportsTransactions();
+    for (const el of [this.txSep, this.acBtn, this.commitBtn, this.rollbackBtn]) el.hidden = !tx;
+    const waiting = !!this.connId && this.hub.loginWaiting(this.connId);
     this.runBtn.disabled = busy;
     this.scriptBtn.disabled = busy;
-    this.cancelBtn.hidden = !r.running;
+    this.cancelBtn.hidden = !r.running && !waiting;
+    this.cancelBtn.title = waiting ? 'Stop waiting for the login' : 'Stop the running statement';
     this.acBtn.setAttribute('aria-checked', String(r.autocommit));
     this.acBtn.classList.toggle('is-on', r.autocommit);
     this.acBtn.disabled = r.running;
     this.commitBtn.disabled = !r.inTransaction || r.running;
     this.rollbackBtn.disabled = !r.inTransaction || r.running;
-    this.txBadge.hidden = !r.inTransaction;
+    this.txBadge.hidden = !tx || !r.inTransaction;
     this.limitEl.textContent = `Limit ${this.hub.ctx.settings.get('db.maxRows').toLocaleString('en-US')} rows`;
-    this.stateEl.textContent = r.connecting ? 'Connecting...' : r.running ? 'Running...' : r.connected ? `MySQL ${r.info?.serverVersion ?? ''}` : 'Not connected';
+    this.stateEl.textContent = waiting
+      ? 'Waiting for login in your browser…'
+      : r.connecting
+        ? 'Connecting...'
+        : r.running
+          ? 'Running...'
+          : r.connected
+            ? `${this.engineName()} ${r.info?.serverVersion ?? ''}`
+            : 'Not connected';
+    // A new dialect can arrive after a restored console finds its IntelliJ connection.
+    if (this.dialectName() !== this.dialectNow) this.applyDialect();
 
     const title = consoleTitle(c?.name ?? 'Console', this.spec.n);
     const desc = r.database ?? '';
@@ -338,6 +389,26 @@ export class ConsoleContent implements TabContent, RunTarget {
   }
 
   private schemaLoaded = false;
+  private defaultSchema: string | undefined;
+
+  private dialectName(): 'mysql' | 'trino' {
+    return isTrinoConfig(this.config()) ? 'trino' : 'mysql';
+  }
+
+  private engineName(): string {
+    return this.dialectName() === 'trino' ? 'Trino' : 'MySQL';
+  }
+
+  /** The `sql()` extension for the current engine, with the names for completion when we have them. */
+  private sqlExtension() {
+    const dialect = this.dialectName() === 'trino' ? StandardSQL : MySQL;
+    return this.schemaMap ? sql({ dialect, schema: this.schemaMap, defaultSchema: this.defaultSchema, upperCaseKeywords: true }) : sql({ dialect, upperCaseKeywords: true });
+  }
+
+  private applyDialect(): void {
+    this.dialectNow = this.dialectName();
+    this.view.dispatch({ effects: this.sqlComp.reconfigure(this.sqlExtension()) });
+  }
 
   /** Reads table and column names for completion. Needs a connected console. */
   private async loadSchema(): Promise<void> {
@@ -348,7 +419,9 @@ export class ConsoleContent implements TabContent, RunTarget {
     try {
       const map = await this.hub.meta(this.connId, this.root).run((sid) => dbCompletionSchema(sid, db));
       if (this.disposed || token !== this.schemaToken) return;
-      this.view.dispatch({ effects: this.sqlComp.reconfigure(sql({ dialect: MySQL, schema: map, defaultSchema: db, upperCaseKeywords: true })) });
+      this.schemaMap = map;
+      this.defaultSchema = db;
+      this.applyDialect();
     } catch (e) {
       // Completion is optional. A short note in Messages is enough.
       const d = describeError(e);
@@ -400,7 +473,8 @@ export class ConsoleContent implements TabContent, RunTarget {
     this.databaseList = null;
     this.schemaLoaded = false;
     this.schemaToken++;
-    this.view.dispatch({ effects: this.sqlComp.reconfigure(sql({ dialect: MySQL, upperCaseKeywords: true })) });
+    this.schemaMap = undefined;
+    this.applyDialect();
     this.lastDb = this.runner.database;
     this.sync();
     this.view.focus();
@@ -421,8 +495,8 @@ export class ConsoleContent implements TabContent, RunTarget {
       ctx.ui.notify(`Could not read the databases: ${describeError(e).text}`, { kind: 'error' });
     });
     ctx.ui.quickPick({
-      placeholder: 'Choose a database (USE)',
-      emptyText: 'No databases',
+      placeholder: this.dialectName() === 'trino' ? 'Choose a schema (USE)' : 'Choose a database (USE)',
+      emptyText: this.dialectName() === 'trino' ? 'No schemas' : 'No databases',
       items: async (query) => {
         const all = await list.catch(() => [] as string[]);
         const shown = new Set(visibleDatabases(all, showSystem));

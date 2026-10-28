@@ -150,9 +150,21 @@ export function objectNode(connId: string, database: string, o: DbObject): TreeN
   });
 }
 
-/** The five groups of a database. A group with no objects has no chevron. */
-export function groupNodes(connId: string, database: string, objects: DbObjects): TreeNode[] {
-  return GROUPS.map((g) => {
+/** Trino has no procedures, functions or triggers in the tree. */
+const TRINO_GROUPS: readonly DbObjectKind[] = ['table', 'view'];
+
+/** True for a Trino connection. A missing driver means MySQL. */
+export function isTrinoConfig(c: Pick<DbConnectionConfig, 'driver'> | null | undefined): boolean {
+  return c?.driver === 'trino';
+}
+
+/**
+ * The groups of a database. MySQL has five (Tables, Views, Procedures,
+ * Functions, Triggers). Trino has only Tables and Views.
+ * A group with no objects has no chevron.
+ */
+export function groupNodes(connId: string, database: string, objects: DbObjects, trino = false): TreeNode[] {
+  return GROUPS.filter((g) => !trino || TRINO_GROUPS.includes(g.kind)).map((g) => {
     const list = objects[g.key];
     return base({
       id: `g:${connId}/${database}/${g.kind}`,
@@ -224,8 +236,42 @@ export function collectOpen(roots: readonly TreeNode[]): Set<string> {
   return ids;
 }
 
-/** SQL for "Select Top 100". */
+/** MySQL identifier: backticks, and a backtick inside the name is doubled. */
+export function quoteMysql(name: string): string {
+  return '`' + name.replace(/`/g, '``') + '`';
+}
+
+/** Trino identifier: double quotes, and a double quote inside the name is doubled. */
+export function quoteTrino(name: string): string {
+  return '"' + name.replace(/"/g, '""') + '"';
+}
+
+/**
+ * `SELECT * FROM <database>.<table> LIMIT 100;` for a MySQL connection.
+ * For Trino the name is `<catalog>.<schema>.<table>`, and `database` is the schema.
+ * Every part is quoted, so a dot or a space in a name stays inside that part.
+ */
+export function selectSql(config: Pick<DbConnectionConfig, 'driver' | 'catalog'> | null | undefined, database: string, table: string, limit = 100): string {
+  if (isTrinoConfig(config)) {
+    const parts = [config?.catalog, database, table].filter((p): p is string => !!p).map(quoteTrino);
+    return `SELECT * FROM ${parts.join('.')} LIMIT ${limit};`;
+  }
+  return `SELECT * FROM ${quoteMysql(database)}.${quoteMysql(table)} LIMIT ${limit};`;
+}
+
+/** SQL for "Select Top 100" on a MySQL connection. */
 export function selectTopSql(database: string, table: string, limit = 100): string {
-  const q = (s: string) => '`' + s.replace(/`/g, '``') + '`';
-  return `SELECT * FROM ${q(database)}.${q(table)} LIMIT ${limit};`;
+  return selectSql(null, database, table, limit);
+}
+
+/**
+ * How to add `text` as a new last line of an editor document.
+ * `insert` goes to the end of the document. `from` and `to` are the offsets of
+ * `text` in the new document, so the editor can select it.
+ */
+export function appendLine(doc: string, text: string): { at: number; insert: string; from: number; to: number } {
+  const lead = doc === '' || doc.endsWith('\n') ? '' : '\n';
+  const at = doc.length;
+  const from = at + lead.length;
+  return { at, insert: lead + text, from, to: from + text.length };
 }

@@ -19,7 +19,8 @@ export type ErrorCode =
   | 'db_error'
   | 'db_connect'
   | 'db_busy'
-  | 'db_lost';
+  | 'db_lost'
+  | 'db_auth';
 
 export class IpcError extends Error {
   constructor(

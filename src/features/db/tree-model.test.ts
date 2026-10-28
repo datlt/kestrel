@@ -10,6 +10,10 @@ import {
   isSystemSchema,
   objectNode,
   reset,
+  appendLine,
+  quoteMysql,
+  quoteTrino,
+  selectSql,
   selectTopSql,
   tableChildren,
   visibleDatabases,
@@ -124,5 +128,58 @@ describe('reset and open state', () => {
 describe('selectTopSql', () => {
   it('quotes names', () => {
     expect(selectTopSql('my db', 'we`ird')).toBe('SELECT * FROM `my db`.`we``ird` LIMIT 100;');
+  });
+});
+
+describe('selectSql', () => {
+  const trino = { driver: 'trino' as const, catalog: 'hive' };
+  it('uses backticks for MySQL (also when the driver is not set)', () => {
+    expect(selectSql({}, 'shop', 'orders')).toBe('SELECT * FROM `shop`.`orders` LIMIT 100;');
+    expect(selectSql({ driver: 'mysql' }, 'shop', 'orders')).toBe('SELECT * FROM `shop`.`orders` LIMIT 100;');
+  });
+  it('handles odd MySQL names', () => {
+    expect(selectSql(null, 'a`b', 'c.d')).toBe('SELECT * FROM `a``b`.`c.d` LIMIT 100;');
+    expect(selectSql(null, 'my db', 'say "hi"')).toBe('SELECT * FROM `my db`.`say "hi"` LIMIT 100;');
+    expect(selectSql(null, 'データ', 'テーブル')).toBe('SELECT * FROM `データ`.`テーブル` LIMIT 100;');
+    expect(quoteMysql('``')).toBe('``````');
+  });
+  it('uses catalog.schema.table with double quotes for Trino', () => {
+    expect(selectSql(trino, 'web', 'events')).toBe('SELECT * FROM "hive"."web"."events" LIMIT 100;');
+  });
+  it('handles odd Trino names', () => {
+    expect(selectSql(trino, 'we"b', 'a.b')).toBe('SELECT * FROM "hive"."we""b"."a.b" LIMIT 100;');
+    expect(selectSql({ driver: 'trino', catalog: 'ca`t' }, 's', 't`x')).toBe('SELECT * FROM "ca`t"."s"."t`x" LIMIT 100;');
+    expect(selectSql(trino, 'スキーマ', 'ñandú')).toBe('SELECT * FROM "hive"."スキーマ"."ñandú" LIMIT 100;');
+    expect(quoteTrino('""')).toBe('""""""');
+  });
+  it('leaves out an empty Trino catalog', () => {
+    expect(selectSql({ driver: 'trino', catalog: null }, 's', 't')).toBe('SELECT * FROM "s"."t" LIMIT 100;');
+  });
+  it('takes another limit', () => {
+    expect(selectSql(null, 'd', 't', 5)).toBe('SELECT * FROM `d`.`t` LIMIT 5;');
+  });
+});
+
+describe('groups of a Trino database', () => {
+  it('has only Tables and Views', () => {
+    const g = groupNodes('c', 's', objects({ tables: [obj('t')], views: [obj('v', 'view')] }), true);
+    expect(g.map((x) => x.label)).toEqual(['Tables (1)', 'Views (1)']);
+    expect(groupNodes('c', 's', objects()).map((x) => x.label)).toHaveLength(5);
+  });
+});
+
+describe('appendLine', () => {
+  it('starts at once in an empty console', () => {
+    expect(appendLine('', 'SELECT 1;')).toEqual({ at: 0, insert: 'SELECT 1;', from: 0, to: 9 });
+  });
+  it('adds a line break when the last line has text', () => {
+    const a = appendLine('select 1', 'SELECT 2;');
+    expect(a).toEqual({ at: 8, insert: '\nSELECT 2;', from: 9, to: 18 });
+    expect(('select 1' + a.insert).slice(a.from, a.to)).toBe('SELECT 2;');
+  });
+  it('adds no extra break after a final line break', () => {
+    const a = appendLine('select 1;\n', 'X;');
+    expect(a.insert).toBe('X;');
+    expect(a.from).toBe(10);
   });
 });

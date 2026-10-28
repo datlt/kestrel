@@ -1893,6 +1893,7 @@ const DB_COMMANDS = [
   'db_password_delete',
   'db_password_exists',
   'db_idea_list',
+  'db_export_csv',
 ];
 
 /** Sends one command to the dev_http server. No timeout: a query can run for a long time. */

@@ -9,7 +9,6 @@ import { h } from '../../core/dom';
 import type { AppContext } from '../../core/types';
 import { isMac, rafThrottle } from '../../core/util';
 import type { DbResult, DbValue } from '../../ipc/db';
-import { fsWriteFile } from '../../ipc/fs';
 import {
   autoWidths,
   cellText,
@@ -18,7 +17,6 @@ import {
   rowCountNote,
   singleTable,
   sortOrder,
-  toCsv,
   toInsert,
   toJson,
   toTsv,
@@ -37,6 +35,12 @@ const FONT_PX = 13;
 interface Selection {
   pos: number;
   col: number;
+}
+
+/** What the owner of a grid provides. */
+export interface GridHooks {
+  /** The user asked for a CSV file. `rows` are the rows in memory, in the order shown. */
+  downloadCsv(rows: DbValue[][]): void;
 }
 
 export class ResultGrid {
@@ -67,6 +71,7 @@ export class ResultGrid {
   constructor(
     private readonly ctx: AppContext,
     host: HTMLElement,
+    private readonly hooks?: GridHooks,
   ) {
     host.append(this.root);
     this.empty.hidden = true;
@@ -378,19 +383,13 @@ export class ResultGrid {
     else this.copy(toInsert(singleTable(cols), cols, rows), label);
   }
 
-  private async exportCsv(): Promise<void> {
-    if (!this.result) return;
-    try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const path = await save({ title: 'Export as CSV', defaultPath: 'result.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
-      if (!path) return;
-      const text = toCsv(this.columns, this.allRows());
-      // A byte order mark helps Excel to read UTF-8.
-      await fsWriteFile(path, text, { encoding: 'utf-8', bom: true, lineEnding: 'crlf', expectedMtimeMs: null });
-      this.ctx.ui.notify(`Exported ${this.data.length.toLocaleString('en-US')} rows to ${path}`, { timeoutMs: 4000 });
-    } catch (e) {
-      this.ctx.ui.notify(`Could not export: ${e instanceof Error ? e.message : String(e)}`, { kind: 'error' });
-    }
+  /** The rows in memory, in the order shown (sorted when the user sorted a column). */
+  csvRows(): DbValue[][] {
+    return this.allRows();
+  }
+
+  private downloadCsv(): void {
+    if (this.result) this.hooks?.downloadCsv(this.allRows());
   }
 
   private openValue(): void {
@@ -533,7 +532,7 @@ export class ResultGrid {
       { label: `Copy ${rows} as JSON`, run: () => this.copyRows('json') },
       { label: `Copy ${rows} as INSERT Statements`, run: () => this.copyRows('insert') },
       { label: 'Open Value...', run: () => this.openValue(), separatorBefore: true, disabled: !this.sel },
-      { label: 'Export All Rows as CSV...', run: () => void this.exportCsv() },
+      { label: 'Download CSV...', run: () => this.downloadCsv(), disabled: !this.hooks },
     ]);
   }
 

@@ -1,4 +1,4 @@
-// Database feature (MySQL): sidebar view, connection form, SQL consoles, result
+// Database feature (MySQL and Trino): sidebar view, connection form, SQL consoles, result
 // grid, DDL tab, `.sql` file support and commands. Spec: docs/DESIGN.md 9.3.
 //
 // All state lives in one `DbHub` per workbench (never at module level). The
@@ -142,6 +142,13 @@ export function initDb(ctx: AppContext): void {
     ctx.ui.notify('Select a table, view, procedure, function or trigger in the Database view, then run this command again.', { kind: 'info' });
   };
 
+  /** Generate SELECT / Copy SELECT for the table that is selected in the Database view. */
+  const selectAction = (what: 'generate' | 'copy') => () => {
+    if (hub.tree?.selectAction(what)) return;
+    ctx.views.show('database', { focus: true });
+    ctx.ui.notify('Select a table or a view in the Database view, then run this command again.', { kind: 'info' });
+  };
+
   ctx.commands.registerMany([
     { id: 'db.newConsole', title: 'New SQL Console', category: 'Database', keybinding: 'Mod-Alt-n', run: newConsole },
     { id: 'db.addConnection', title: 'Add Connection', category: 'Database', run: addConnection },
@@ -159,6 +166,8 @@ export function initDb(ctx: AppContext): void {
     { id: 'db.rollback', title: 'Roll Back Transaction', category: 'Database', when: sqlActive, run: withTarget((t) => t.rollback()) },
     { id: 'db.toggleAutocommit', title: 'Toggle Auto-commit', category: 'Database', when: sqlActive, run: withTarget((t) => t.toggleAutocommit()) },
     { id: 'db.showDdl', title: 'Show DDL of the Selected Object', category: 'Database', run: showDdl },
+    { id: 'db.generateSelect', title: 'Generate SELECT for the Selected Table', category: 'Database', run: selectAction('generate') },
+    { id: 'db.copySelect', title: 'Copy SELECT for the Selected Table', category: 'Database', run: selectAction('copy') },
     {
       id: 'db.refresh',
       title: 'Refresh Database View',

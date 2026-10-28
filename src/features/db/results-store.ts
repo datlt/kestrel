@@ -1,15 +1,30 @@
 // What a console (or the bottom panel) shows after statements ran: result
 // tables and the Messages list. No DOM code, so tests can import it.
 
-import type { DbResult } from '../../ipc/db';
+import type { DbExportResult, DbResult } from '../../ipc/db';
 import { formatDuration, plural, rowCountNote } from './grid-data';
 import { oneLine } from './split';
+
+/**
+ * What a result needs to write ALL rows of its statement to a CSV file. The
+ * runner that produced the result provides it. It uses the session of that runner.
+ */
+export interface ResultExporter {
+  /** Runs `sql` again and writes every row to `path`. Rejects with code `cancelled` after `cancel()`. */
+  exportAll(sql: string, path: string): Promise<DbExportResult>;
+  /** Stops a running `exportAll`. */
+  cancel(): void;
+  /** The session is busy, so a new export cannot start now. */
+  busy(): boolean;
+}
 
 export interface ResultEntry {
   id: number;
   title: string;
   sql: string;
   result: DbResult;
+  /** Set when the result came from a runner. Without it, only the rows in memory can be saved. */
+  exporter?: ResultExporter;
 }
 
 export type MessageLevel = 'ok' | 'info' | 'warn' | 'error';
@@ -62,10 +77,10 @@ export class ResultsStore {
     this.emit();
   }
 
-  addResult(sql: string, result: DbResult): boolean {
+  addResult(sql: string, result: DbResult, exporter?: ResultExporter): boolean {
     if (this.results.length >= MAX_RESULT_TABS) return false;
     const n = this.results.length + 1;
-    this.results.push({ id: this.nextId++, title: `Result ${n}`, sql, result });
+    this.results.push({ id: this.nextId++, title: `Result ${n}`, sql, result, exporter });
     this.emit();
     return true;
   }

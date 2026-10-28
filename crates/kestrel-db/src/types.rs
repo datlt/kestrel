@@ -12,6 +12,27 @@ pub enum SslMode {
     Required,
 }
 
+/// The database engine of a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Driver {
+    #[default]
+    Mysql,
+    Trino,
+}
+
+/// How a Trino session logs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrinoAuth {
+    /// Only the user name (header `X-Trino-User`).
+    None,
+    /// HTTP Basic. Only over https.
+    Password,
+    /// Login in the system browser. The token stays in memory.
+    Oauth2,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshTunnel {
@@ -46,6 +67,15 @@ pub struct ConnectionConfig {
     pub id: String,
     #[serde(default)]
     pub name: String,
+    /// Default `mysql`. For `trino`: `database` is the schema and `ssl` `disabled` means http.
+    #[serde(default)]
+    pub driver: Driver,
+    /// Trino only: the catalog, for example `hive`.
+    #[serde(default)]
+    pub catalog: Option<String>,
+    /// Trino only. `None` means `password` when `ssl` is not `disabled`, else `none`.
+    #[serde(default)]
+    pub trino_auth: Option<TrinoAuth>,
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -117,6 +147,9 @@ pub struct TestResult {
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub session_id: String,
+    pub driver: Driver,
+    /// False for Trino: every statement commits at once.
+    pub supports_transactions: bool,
     pub server_version: String,
     pub connection_id: u64,
     pub database: Option<String>,
@@ -226,4 +259,27 @@ pub struct IndexInfo {
     pub columns: Vec<String>,
     #[serde(rename = "type")]
     pub type_name: String,
+}
+
+/// Options of `db_export_csv`. Missing values use the defaults.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportOptions {
+    /// One character. Default `,`.
+    #[serde(default)]
+    pub delimiter: Option<String>,
+    /// Write the column names as the first row. Default true.
+    #[serde(default)]
+    pub header: Option<bool>,
+    /// Write a UTF-8 BOM first. Default true.
+    #[serde(default)]
+    pub bom: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResult {
+    pub rows: u64,
+    pub bytes: u64,
+    pub elapsed_ms: u64,
 }

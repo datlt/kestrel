@@ -10,7 +10,12 @@ import {
   removeConnection,
   sameDraft,
   upsertConnection,
+  defaultPort,
+  defaultTrinoAuth,
+  usesPassword,
   validateDraft,
+  withDriver,
+  withSsl,
 } from './form-model';
 
 const valid = () => ({ ...blankDraft('a'), name: 'Local', user: 'root' });
@@ -91,5 +96,62 @@ describe('connection list', () => {
   it('summarizes', () => {
     expect(connectionSummary({ ...a, database: 'shop' })).toBe('root@127.0.0.1:3306/shop');
     expect(connectionSummary({ ...a, database: null })).toBe('root@127.0.0.1:3306');
+  });
+});
+
+describe('Trino form', () => {
+  const trino = () => withDriver({ ...blankDraft('t'), name: 'Lake', user: 'me', host: 'trino.example.com', catalog: 'hive' }, 'trino');
+
+  it('starts as MySQL', () => {
+    const d = blankDraft('a');
+    expect(d).toMatchObject({ driver: 'mysql', port: '3306', ssl: 'preferred' });
+  });
+  it('uses port 443, TLS and the password login when you choose Trino', () => {
+    expect(trino()).toMatchObject({ driver: 'trino', port: '443', ssl: 'required', trinoAuth: 'password' });
+  });
+  it('knows the default ports', () => {
+    expect(defaultPort('mysql', 'disabled')).toBe('3306');
+    expect(defaultPort('trino', 'required')).toBe('443');
+    expect(defaultPort('trino', 'disabled')).toBe('8080');
+  });
+  it('switches to port 8080 and no login when TLS is turned off', () => {
+    expect(withSsl(trino(), 'disabled')).toMatchObject({ port: '8080', trinoAuth: 'none', ssl: 'disabled' });
+    expect(defaultTrinoAuth('required')).toBe('password');
+  });
+  it('keeps a port and a login that the user chose', () => {
+    const custom = { ...trino(), port: '8443', trinoAuth: 'oauth2' as const };
+    expect(withSsl(custom, 'disabled')).toMatchObject({ port: '8443', trinoAuth: 'oauth2' });
+  });
+  it('goes back to port 3306 for MySQL', () => {
+    expect(withDriver(trino(), 'mysql').port).toBe('3306');
+    expect(withDriver({ ...trino(), port: '9999' }, 'mysql').port).toBe('9999');
+  });
+  it('needs a catalog', () => {
+    expect(validateDraft({ ...trino(), catalog: ' ' }).catalog).toBeDefined();
+    expect(validateDraft(trino())).toEqual({});
+    expect(validateDraft({ ...valid(), catalog: '' }).catalog).toBeUndefined();
+  });
+  it('builds a Trino config without MySQL-only settings', () => {
+    const cfg = configFromDraft({ ...trino(), database: 'web', readOnly: true, sshEnabled: true, sshHost: 'x' });
+    expect(cfg).toMatchObject({ driver: 'trino', catalog: 'hive', trinoAuth: 'password', database: 'web', port: 443, ssl: 'required', ssh: null, readOnly: true });
+  });
+  it('writes no engine fields for MySQL', () => {
+    const cfg = configFromDraft(valid());
+    expect('driver' in cfg || 'catalog' in cfg || 'trinoAuth' in cfg).toBe(false);
+  });
+  it('round-trips a Trino config', () => {
+    const cfg = configFromDraft({ ...trino(), trinoAuth: 'oauth2', database: 'web' });
+    expect(configFromDraft(draftFromConfig(cfg))).toEqual(cfg);
+  });
+  it('reads a Trino config that has no login set', () => {
+    const base: DbConnectionConfig = { id: 'x', name: 'N', driver: 'trino', catalog: 'c', host: 'h', port: 443, user: 'u', ssl: 'required', readOnly: false, production: false };
+    expect(draftFromConfig(base).trinoAuth).toBe('password');
+    expect(draftFromConfig({ ...base, ssl: 'disabled' }).trinoAuth).toBe('none');
+  });
+  it('asks for a password only with MySQL or the Trino password login', () => {
+    expect(usesPassword({ ssl: 'preferred' })).toBe(true);
+    expect(usesPassword({ driver: 'trino', ssl: 'required', trinoAuth: 'password' })).toBe(true);
+    expect(usesPassword({ driver: 'trino', ssl: 'required', trinoAuth: 'oauth2' })).toBe(false);
+    expect(usesPassword({ driver: 'trino', ssl: 'disabled' })).toBe(false);
   });
 });

@@ -14,6 +14,9 @@ pub enum Phase {
 /// MySQL error number of a statement that the server stopped on request (`KILL QUERY`).
 pub const ER_QUERY_INTERRUPTED: u16 = 1317;
 
+/// Login refused (wrong user or password).
+pub const ER_ACCESS_DENIED: u16 = 1045;
+
 /// Server errors that mean "this connection is gone".
 fn lost_server_code(code: u16) -> bool {
     // 1053 server shutdown, 1927 connection killed, 2006 server has gone away,
@@ -50,7 +53,9 @@ pub fn is_lost(e: &MyError) -> bool {
 pub fn map_error(e: &MyError, phase: Phase) -> Error {
     match e {
         MyError::Server(s) => {
-            if phase == Phase::Connect {
+            if s.code == ER_ACCESS_DENIED {
+                Error::new(codes::DB_AUTH, server_message(s))
+            } else if phase == Phase::Connect {
                 Error::new(codes::DB_CONNECT, server_message(s))
             } else if lost_server_code(s.code) {
                 Error::new(codes::DB_LOST, server_message(s))
@@ -91,9 +96,9 @@ mod tests {
     }
 
     #[test]
-    fn login_failure_is_db_connect() {
+    fn login_failure_is_db_auth() {
         let e = map_error(&server(1045, "28000", "Access denied for user 'x'"), Phase::Connect);
-        assert_eq!(e.code(), "db_connect");
+        assert_eq!(e.code(), "db_auth");
         assert!(e.to_string().starts_with("1045 (28000): "));
     }
 

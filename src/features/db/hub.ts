@@ -18,6 +18,7 @@ import {
 import { IpcError } from '../../ipc/invoke';
 import { describeError, isAuthError } from './errors';
 import { IdeaSources } from './idea';
+import { effectiveTrinoAuth, usesPassword } from './form-model';
 import { isIdeaId } from './idea-model';
 import { ResultsStore } from './results-store';
 
@@ -36,6 +37,13 @@ export interface RunTarget {
   inTransaction(): boolean;
   /** Text for the status bar. */
   status(): { text: string; tooltip: string };
+  /** Consoles only: the connection the console uses now. */
+  connectionId?(): string | null;
+  /**
+   * Consoles only: adds `text` as a new last line, selects it and focuses the
+   * editor. It does not run the text.
+   */
+  appendSql?(text: string): void;
   dispose?(): void;
 }
 
@@ -45,6 +53,13 @@ export interface TreeApi {
   collapseAll(): void;
   /** The selected node, or null. */
   selected(): { connId: string; database?: string; name?: string; objectKind?: string } | null;
+  /** Generate SELECT / Copy SELECT for the selected table or view. False when no table or view is selected. */
+  selectAction(what: 'generate' | 'copy'): boolean;
+}
+
+/** A browser login that is still running (Trino with OAuth2). */
+interface LoginWait {
+  cancel(): void;
 }
 
 /** Talks to the server through one session that is shared by all schema calls. */
@@ -142,6 +157,12 @@ export class DbHub {
   private readonly quiet = new Set<string>();
   /** The data sources of the IntelliJ project in the open folder. */
   readonly idea: IdeaSources;
+  /** Browser logins in progress, by connection id. */
+  private readonly logins = new Map<string, Set<LoginWait>>();
+  private readonly loginListeners = new Set<() => void>();
+  /** When each console was used last (a counter, higher is newer). */
+  private readonly usedAt = new Map<string, number>();
+  private useSeq = 0;
 
   constructor(readonly ctx: AppContext) {
     this.idea = new IdeaSources(ctx);
@@ -192,7 +213,7 @@ export class DbHub {
     let password = this.passwords.get(config.id) ?? null;
     for (;;) {
       try {
-        const info = await dbConnect({ config, password });
+        const info = await this.dial(config, password);
         if (this.disposed) {
           void dbDisconnect(info.sessionId).catch(() => undefined);
           throw new IpcError('cancelled', 'The workspace tab was closed.', 'db_connect');
@@ -201,7 +222,8 @@ export class DbHub {
         if (password !== null) this.passwords.set(config.id, password);
         return info;
       } catch (e) {
-        if (!isAuthError(e) || this.quiet.has(config.id)) throw e;
+        // Trino with OAuth2 or no login has no password to ask for.
+        if (!isAuthError(e) || this.quiet.has(config.id) || !usesPassword(config)) throw e;
         // A wrong password in the keychain must be fixed in the connection form.
         if (password === null && (await dbPasswordExists(config.id).catch(() => false))) throw e;
         this.passwords.delete(config.id);
@@ -210,6 +232,71 @@ export class DbHub {
         password = typed;
       }
     }
+  }
+
+  /** `dbConnect`. For the OAuth2 login of Trino it can be cancelled in the UI (see `cancelConnect`). */
+  private dial(config: DbConnectionConfig, password: string | null): Promise<DbSessionInfo> {
+    const browserLogin = config.driver === 'trino' && effectiveTrinoAuth(config) === 'oauth2';
+    if (!browserLogin) return dbConnect({ config, password });
+    return new Promise<DbSessionInfo>((resolve, reject) => {
+      let done = false;
+      const wait: LoginWait = {
+        cancel: () => {
+          if (done) return;
+          done = true;
+          this.endLogin(config.id, wait);
+          reject(new IpcError('cancelled', 'The login was cancelled.', 'db_connect'));
+        },
+      };
+      let set = this.logins.get(config.id);
+      if (!set) this.logins.set(config.id, (set = new Set()));
+      set.add(wait);
+      this.emitLogin();
+      dbConnect({ config, password }).then(
+        (info) => {
+          if (done) {
+            // The user cancelled the wait, but the login finished. Close this session.
+            void dbDisconnect(info.sessionId).catch(() => undefined);
+            return;
+          }
+          done = true;
+          this.endLogin(config.id, wait);
+          resolve(info);
+        },
+        (err) => {
+          if (done) return;
+          done = true;
+          this.endLogin(config.id, wait);
+          reject(err);
+        },
+      );
+    });
+  }
+
+  private endLogin(connId: string, wait: LoginWait): void {
+    const set = this.logins.get(connId);
+    set?.delete(wait);
+    if (set && set.size === 0) this.logins.delete(connId);
+    this.emitLogin();
+  }
+
+  private emitLogin(): void {
+    for (const fn of [...this.loginListeners]) fn();
+  }
+
+  /** The connection waits for the user to log in in the browser. */
+  loginWaiting(connId: string): boolean {
+    return (this.logins.get(connId)?.size ?? 0) > 0;
+  }
+
+  /** Closes the waiting attempts of a connection in the UI. The connect call itself cannot be stopped. */
+  cancelConnect(connId: string): void {
+    for (const w of [...(this.logins.get(connId) ?? [])]) w.cancel();
+  }
+
+  onLoginChange(fn: () => void): () => void {
+    this.loginListeners.add(fn);
+    return () => this.loginListeners.delete(fn);
   }
 
   private askPassword(config: DbConnectionConfig, host: HTMLElement, error: string): Promise<string | null> {
@@ -248,6 +335,24 @@ export class DbHub {
   closeMeta(connId: string): void {
     this.metas.get(connId)?.close();
     this.metas.delete(connId);
+  }
+
+  // --- Consoles ------------------------------------------------------------------------
+
+  /** Call when a console is shown, focused or used. "Generate SELECT" picks the newest one. */
+  touchConsole(tabId: string): void {
+    this.usedAt.set(tabId, ++this.useSeq);
+  }
+
+  /** The SQL console of a connection that was used last, or null when none is open. */
+  mostRecentConsole(connId: string): { tabId: string; target: RunTarget } | null {
+    let best: { tabId: string; target: RunTarget; at: number } | null = null;
+    for (const [tabId, target] of this.consoles) {
+      if (target.kind !== 'console' || target.connectionId?.() !== connId) continue;
+      const at = this.usedAt.get(tabId) ?? 0;
+      if (!best || at >= best.at) best = { tabId, target, at };
+    }
+    return best;
   }
 
   // --- Active target and status bar ----------------------------------------------------
@@ -319,6 +424,7 @@ export class DbHub {
    */
   disposeAll(): void {
     this.disposed = true;
+    for (const set of [...this.logins.values()]) for (const w of [...set]) w.cancel();
     for (const m of this.metas.values()) m.close();
     this.metas.clear();
     for (const sid of [...this.sessions]) this.disconnect(sid);

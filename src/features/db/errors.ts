@@ -1,7 +1,7 @@
 // Reads errors that come from the Rust side (see src/ipc/db.ts for the codes).
 // No DOM code, so tests can import it.
 
-export type DbErrorKind = 'server' | 'connect' | 'busy' | 'lost' | 'cancelled' | 'other';
+export type DbErrorKind = 'server' | 'connect' | 'auth' | 'busy' | 'lost' | 'cancelled' | 'other';
 
 export interface DbErrorInfo {
   kind: DbErrorKind;
@@ -30,6 +30,8 @@ export function describeError(e: unknown): DbErrorInfo {
     }
     case 'db_connect':
       return { kind: 'connect', number: null, sqlstate: null, text };
+    case 'db_auth':
+      return { kind: 'auth', number: null, sqlstate: null, text };
     case 'db_busy':
       return { kind: 'busy', number: null, sqlstate: null, text };
     case 'db_lost':
@@ -41,9 +43,14 @@ export function describeError(e: unknown): DbErrorInfo {
   }
 }
 
-/** The server refused the user name or the password (MySQL error 1045, or a text that says so). */
+/**
+ * The server refused the user name or the password. This is the code `db_auth`
+ * (MySQL 1045 or Trino 401). We also keep the old check: MySQL error 1045, or a
+ * text that says "access denied".
+ */
 export function isAuthError(e: unknown): boolean {
   const info = describeError(e);
+  if (info.kind === 'auth') return true;
   if (info.kind !== 'connect' && info.kind !== 'server') return false;
   return info.number === 1045 || /\b1045\b/.test(info.text) || /access denied/i.test(info.text);
 }

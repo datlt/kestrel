@@ -29,7 +29,8 @@ and its goal is to replace IntelliJ IDEA for it:
 - Several repositories stay open side by side as workspace tabs.
 - Diff, file history and blame are one key away.
 - Markdown, HTML and CSV files open as rendered views as well as text.
-- A MySQL console with transactions and DDL is built in.
+- A database console for MySQL and Trino is built in, with transactions, DDL
+  and CSV download.
 - Language servers give you completion and go to definition when you need them.
 
 ## Why the name
@@ -63,13 +64,14 @@ the whole picture, and quick when you go down to the exact line.
   TSV as a sortable table, images.
 - **Git.** Changes view, side-by-side and unified diff, compare with any branch,
   file history, blame, and changed lines in the editor gutter.
-- **MySQL.** Saved connections (password in the OS keychain, SSH tunnel),
-  schema tree, SQL console with auto-commit on or off, commit and rollback,
-  result grid, DDL viewer, and run-the-statement for `.sql` files. See
-  [Database](#database-mysql).
+- **MySQL and Trino.** Saved connections (password in the OS keychain, SSH
+  tunnel for MySQL, browser login for Trino), schema tree, SQL console with
+  auto-commit on or off, commit and rollback, result grid, CSV download, DDL
+  viewer, and run-the-statement for `.sql` files. See
+  [Database](#database-mysql-and-trino).
 - **IntelliJ data sources.** Open a project that has `.idea/dataSources.xml`
-  and its MySQL data sources appear in the Database view and connect by
-  themselves. Nothing to set up again.
+  and its MySQL and Trino data sources appear in the Database view and connect
+  by themselves. Nothing to set up again.
 - **Terminal** in the bottom panel: several terminal tabs, and each tab splits
   into panes side by side or above each other.
 - **Web tabs.** Open web apps such as mail, calendar and chat as tabs next to
@@ -224,12 +226,12 @@ Kestrel finds them in the PATH of your login shell, also when you start it from
 the Dock. Details, settings and troubleshooting are in
 [docs/LSP.md](docs/LSP.md).
 
-## Database (MySQL)
+## Database (MySQL and Trino)
 
 Open the **Database** view with Ctrl-Shift-d (or the database icon on the left).
 
-1. Click **+** and fill in the connection: host, port, user, password, default
-   database, TLS mode.
+1. Click **+**, choose the **Driver** (MySQL or Trino) and fill in the
+   connection: host, port, user, password, default database, TLS mode.
    - **Save password in keychain** keeps the password in the macOS Keychain
      (Windows Credential Manager, Linux Secret Service). Without it, Kestrel
      asks for the password once per session. Passwords are never written to
@@ -238,19 +240,44 @@ Open the **Database** view with Ctrl-Shift-d (or the database icon on the left).
      and the ssh agent work. Password login for ssh is not supported.
    - **Production database** shows a red bar in the console and asks before
      statements that change data. **Read-only** makes every session read only.
+     For Trino, Kestrel refuses every statement except SELECT, WITH, SHOW,
+     DESCRIBE, EXPLAIN and VALUES.
 2. Click **Test Connection**, then **Save**.
 3. Expand the connection to see databases, tables, columns, indexes, views,
-   procedures, functions and triggers. Right-click a table for **Select Top
-   100**, **New SQL Console** and **Show DDL**.
+   procedures, functions and triggers. Right-click a table or view:
+   - **Select Top 100** runs `SELECT * FROM <table> LIMIT 100` at once.
+   - **Generate SELECT** writes the same statement into the SQL console you
+     used last (or a new one) and selects it, so you can add a WHERE first.
+   - **Copy SELECT** puts the statement on the clipboard.
+   - **New SQL Console** and **Show DDL**.
+
+**Trino.** Choose Trino as the driver, then set the **Catalog** (for example
+`hive`) and, if you want, a default **Schema**. TLS "Required" means https.
+**Login** has three choices:
+
+- **None: only the user name**: Kestrel sends the user name in the
+  `X-Trino-User` header and no password.
+- **Password (HTTPS)**: the Trino password or LDAP login. Kestrel refuses to
+  send a password over http.
+- **OAuth2: login in the browser**: Kestrel opens the Trino login page in your
+  browser and waits up to 3 minutes for you to log in. It keeps the login
+  while Kestrel runs, so other consoles of the same connection do not ask
+  again.
+
+Trino has no transactions in Kestrel: every statement commits at once, and the
+console hides Auto-commit, Commit and Rollback. Trino connections show tables
+and views, but no procedures, functions, triggers or indexes. SSH tunnels are
+for MySQL only.
 
 **IntelliJ data sources.** When the open folder has `.idea/dataSources.xml`,
 the Database view shows a group "IntelliJ: <folder>" with its data sources and
-connects to the MySQL ones when the view opens (settings `db.idea.enabled` and
+connects to the MySQL and Trino ones when the view opens (settings `db.idea.enabled` and
 `db.idea.autoConnect`). The password comes from the JDBC URL in the file, or
 from the IntelliJ entry in the keychain. It stays in the Rust side of Kestrel.
-Names with `real`, `prod` or `live` count as production. Trino and other
+Names with `real`, `prod` or `live` count as production. PostgreSQL and other
 drivers are listed but not supported yet. Right-click a source and choose
-**Copy to My Connections** to change it.
+**Copy to My Connections** to change it (for example to use the browser login
+for Trino).
 
 In a SQL console:
 
@@ -267,8 +294,15 @@ In a SQL console:
   Rollback or Cancel.
 - UPDATE or DELETE without WHERE always asks first.
 - Each result set gets its own tab. Right-click the grid to copy rows as TSV,
-  JSON or INSERT statements, or to export a CSV file. The **Messages** tab
-  lists every statement with its time, rows and errors.
+  JSON or INSERT statements. The **Messages** tab lists every statement with
+  its time, rows and errors.
+- **Download CSV** (button above the result, or right-click the grid) saves
+  the result as a UTF-8 CSV file with a header row. Excel opens it with the
+  right characters. When the result was cut off at the row limit, Kestrel asks:
+  - **Rows shown** saves only the rows in the grid.
+  - **All rows** runs the query again and writes every row straight into the
+    file, with no row limit. This works only for statements that only read
+    data. You can cancel it while it runs.
 - In a `.sql` file of your project, choose a connection in the status bar and
   press Mod-Enter to run the statement at the cursor.
 
@@ -421,7 +455,11 @@ On macOS they use about 100 MB more.
   files you do not trust.
 - The app is not notarized by Apple (see "Install on macOS").
 - MySQL TLS modes `preferred` and `required` encrypt the connection but do not
-  check the server certificate.
+  check the server certificate. Trino over https checks the certificate
+  against the system CA store.
+- Cancel during a Trino browser login only stops the wait in Kestrel. If you
+  finish the login in the browser later, Kestrel closes that session.
+- Copy as INSERT uses MySQL backticks, also for Trino results.
 - There is no debugger and no extension system.
 - Web tabs are native web views over the editor. While a page has the focus,
   macOS sends Cmd shortcuts to the page, so click outside the page first.

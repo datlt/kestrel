@@ -10,7 +10,8 @@
 //   fails with code `db_busy` (schema calls included).
 // - Errors use the codes `db_error` (server error; message starts with
 //   "<number> (<sqlstate>): "), `db_connect` (connect, login, TLS or SSH
-//   problems), `db_busy`, `db_lost` (connection lost; reconnect), `cancelled`.
+//   problems), `db_auth` (login refused: MySQL 1045 or Trino 401; ask for the
+//   password), `db_busy`, `db_lost` (connection lost; reconnect), `cancelled`.
 // - Sessions belong to the window that opened them. Rust closes them (and
 //   their tunnels) when the window closes and when the app quits.
 // - Passwords never travel in settings. They come in `password` arguments or
@@ -19,6 +20,20 @@
 import { invoke } from './invoke';
 
 export type DbSslMode = 'disabled' | 'preferred' | 'required';
+
+/** Database engine. Default `mysql`. */
+export type DbDriver = 'mysql' | 'trino';
+
+/**
+ * How a Trino session logs in.
+ * - `none`: only the user name (header `X-Trino-User`).
+ * - `password`: HTTP Basic over HTTPS (Trino password or LDAP authenticator).
+ * - `oauth2`: Trino answers 401 with `x_redirect_server`; Rust opens that page
+ *   in the system browser (where the user is logged in to SSO) and polls
+ *   `x_token_server` for the token. The token is kept in memory until the app
+ *   quits.
+ */
+export type DbTrinoAuth = 'none' | 'password' | 'oauth2';
 
 export interface DbSshTunnel {
   /**
@@ -47,6 +62,12 @@ export interface DbConnectionConfig {
   /** Stable unique id (also the keychain account name of the password). */
   id: string;
   name: string;
+  /** Default `mysql`. For `trino`: `database` is the schema, `catalog` the catalog, `ssl` `disabled` means http. */
+  driver?: DbDriver;
+  /** Trino only: catalog, for example `hive`. */
+  catalog?: string | null;
+  /** Trino only. Default `password` when `ssl` is not `disabled`, else `none`. */
+  trinoAuth?: DbTrinoAuth | null;
   host: string;
   port: number;
   user: string;
@@ -77,6 +98,13 @@ export interface DbConnectionConfig {
 
 export interface DbSessionInfo {
   sessionId: string;
+  driver: DbDriver;
+  /**
+   * False for Trino: sessions always auto-commit. `db_set_autocommit`,
+   * `db_commit` and `db_rollback` fail with `invalid_input`, and the UI hides
+   * the transaction controls.
+   */
+  supportsTransactions: boolean;
   serverVersion: string;
   /** `CONNECTION_ID()` of the session. */
   connectionId: number;
@@ -215,12 +243,44 @@ export const dbColumns = (sessionId: string, database: string, table: string) =>
   invoke<DbColumnInfo[]>('db_columns', { sessionId, database, table });
 export const dbIndexes = (sessionId: string, database: string, table: string) =>
   invoke<DbIndexInfo[]>('db_indexes', { sessionId, database, table });
-/** `SHOW CREATE TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER`, as SQL text. */
+/**
+ * Trino: `dbDatabases` lists the schemas of the connection catalog, `dbObjects`
+ * gives tables and views only, `dbIndexes` is empty, `dbDdl` uses
+ * `SHOW CREATE TABLE/VIEW`.
+ *
+ * `SHOW CREATE TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER`, as SQL text.
+ */
 export const dbDdl = (sessionId: string, database: string, name: string, kind: DbObjectKind) =>
   invoke<string>('db_ddl', { sessionId, database, name, kind });
 /** Table name → column names, for SQL completion (one information_schema query). */
 export const dbCompletionSchema = (sessionId: string, database: string) =>
   invoke<Record<string, string[]>>('db_completion_schema', { sessionId, database });
+
+// --- Export ---------------------------------------------------------------
+
+export interface DbExportOptions {
+  /** Default `,`. */
+  delimiter?: string;
+  /** Write the column names as the first row. Default true. */
+  header?: boolean;
+  /** Write a UTF-8 BOM so Excel reads non-ASCII text. Default true. */
+  bom?: boolean;
+}
+
+export interface DbExportResult {
+  rows: number;
+  bytes: number;
+  elapsedMs: number;
+}
+
+/**
+ * Runs ONE read statement again and streams ALL rows (no `maxRows`) into a CSV
+ * file at `path` (absolute). RFC 4180 quoting, `\r\n` line ends, NULL as an
+ * empty field. Uses the session, so it is busy meanwhile; `dbCancel` stops it
+ * and removes the half-written file. Values are text as in `DbValue`.
+ */
+export const dbExportCsv = (sessionId: string, sql: string, path: string, options: DbExportOptions = {}) =>
+  invoke<DbExportResult>('db_export_csv', { sessionId, sql, path, options });
 
 // --- IntelliJ data sources ------------------------------------------------
 
@@ -229,9 +289,9 @@ export interface DbIdeaDataSource {
   config: DbConnectionConfig;
   /** IntelliJ `driver-ref`, for example `mysql.8`, `mariadb`, `trino`, `postgresql`. */
   driver: string;
-  /** Kestrel can connect (MySQL or MariaDB). */
+  /** Kestrel can connect (MySQL, MariaDB or Trino). */
   supported: boolean;
-  /** Why it is not supported, for example "Trino is not supported". */
+  /** Why it is not supported, for example "PostgreSQL is not supported". */
   reason: string | null;
   /** Where the password comes from at connect time. */
   passwordSource: 'file' | 'keychain' | 'none';

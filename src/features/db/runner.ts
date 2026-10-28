@@ -7,11 +7,12 @@
 // - When the connection is lost it tells the user and offers "Reconnect".
 //   It never runs a statement again by itself.
 
-import type { DbConnectionConfig, DbExecResult, DbSessionInfo, DbTxState } from '../../ipc/db';
-import { dbCancel, dbCommit, dbExecute, dbRollback, dbSetAutocommit, dbUse } from '../../ipc/db';
+import type { DbConnectionConfig, DbExecResult, DbExportResult, DbSessionInfo, DbTxState } from '../../ipc/db';
+import { dbCancel, dbCommit, dbExecute, dbExportCsv, dbRollback, dbSetAutocommit, dbUse } from '../../ipc/db';
+import { IpcError } from '../../ipc/invoke';
 import { describeError } from './errors';
 import type { DbHub } from './hub';
-import { resultMessage, type ResultsStore } from './results-store';
+import { resultMessage, type ResultExporter, type ResultsStore } from './results-store';
 import { needsConfirmation } from './safety';
 import { lineOf, oneLine, type Stmt } from './split';
 
@@ -49,6 +50,46 @@ export class SqlRunner {
     return this.sessionId !== null;
   }
 
+  /**
+   * False for Trino: every statement commits at once. Before the first connect we
+   * look at the driver of the connection. After it, we use what the server session says.
+   */
+  supportsTransactions(): boolean {
+    if (this.info) return this.info.supportsTransactions;
+    return this.o.getConfig()?.driver !== 'trino';
+  }
+
+  /** Lets a result table write all rows of its statement to a CSV file. It uses this runner's session. */
+  readonly exporter: ResultExporter = {
+    exportAll: (sql, path) => this.exportAll(sql, path),
+    cancel: () => this.cancel(),
+    busy: () => this.running || this.connecting,
+  };
+
+  /**
+   * Runs one read statement again and streams all rows into a CSV file.
+   * The session is busy meanwhile (`running` is true), so Cancel works as for a statement.
+   */
+  private async exportAll(sql: string, path: string): Promise<DbExportResult> {
+    const sid = this.sessionId;
+    if (!sid) throw new IpcError('db_lost', 'The connection is closed. Run the statement again, then download.', 'db_export_csv');
+    if (this.running || this.connecting) throw new IpcError('db_busy', 'The connection is busy. Wait for the running statement or cancel it.', 'db_export_csv');
+    this.running = true;
+    this.o.onState();
+    try {
+      const r = await dbExportCsv(sid, sql, path);
+      this.o.store.addMessage({ sql: oneLine(sql, 120), where: null, level: 'ok', text: `Saved ${r.rows.toLocaleString('en-US')} rows to ${path}`, elapsedMs: r.elapsedMs });
+      return r;
+    } catch (e) {
+      const d = describeError(e);
+      if (d.kind === 'lost') this.connectionLost();
+      throw e;
+    } finally {
+      this.running = false;
+      this.o.onState();
+    }
+  }
+
   // --- Session ----------------------------------------------------------------------
 
   async ensureSession(): Promise<boolean> {
@@ -77,7 +118,8 @@ export class SqlRunner {
       const wanted = this.database;
       if (wanted && wanted !== info.database) await dbUse(info.sessionId, wanted);
       else this.database = info.database;
-      if (!this.autocommit) await dbSetAutocommit(info.sessionId, false);
+      if (!info.supportsTransactions) this.autocommit = true;
+      else if (!this.autocommit) await dbSetAutocommit(info.sessionId, false);
       else this.autocommit = info.autocommit;
       return true;
     } catch (e) {
@@ -150,7 +192,15 @@ export class SqlRunner {
     this.o.onState();
   }
 
+  /** Trino has no transactions. Tell the user (a command can reach us even when the buttons are hidden). */
+  private noTransactions(): boolean {
+    if (this.supportsTransactions()) return false;
+    this.ctx.ui.notify('This connection has no transactions. Every statement is saved at once.', { kind: 'info', timeoutMs: 3000 });
+    return true;
+  }
+
   async setAutocommit(on: boolean): Promise<void> {
+    if (this.noTransactions()) return;
     if (this.running) {
       this.ctx.ui.notify('A statement is running. Wait for it or cancel it first.', { kind: 'warn' });
       return;
@@ -178,6 +228,7 @@ export class SqlRunner {
 
   private async endTransaction(label: string, call: (sid: string) => Promise<DbTxState>): Promise<boolean> {
     if (!this.sessionId) return false;
+    if (!this.supportsTransactions()) return !this.noTransactions();
     if (this.running) {
       this.ctx.ui.notify('A statement is running. Wait for it or cancel it first.', { kind: 'warn' });
       return false;
@@ -195,8 +246,13 @@ export class SqlRunner {
     }
   }
 
+  /** Stops the running statement or export. While connecting (browser login), it closes the wait. */
   cancel(): void {
     if (this.running && this.sessionId) void dbCancel(this.sessionId).catch(() => undefined);
+    else if (this.connecting) {
+      const id = this.o.getConfig()?.id;
+      if (id) this.o.hub.cancelConnect(id);
+    }
   }
 
   // --- Running ----------------------------------------------------------------------------
@@ -274,7 +330,7 @@ export class SqlRunner {
     for (const res of r.results) {
       const m = resultMessage(res);
       store.addMessage({ sql, where, level: m.level, text: m.text, elapsedMs: res.elapsedMs || r.elapsedMs });
-      if (res.kind === 'rows' && !store.addResult(s.text, res)) {
+      if (res.kind === 'rows' && !store.addResult(s.text, res, this.exporter)) {
         store.addMessage({ sql: null, where: null, level: 'warn', text: 'Too many result tables. The next ones are not shown.', elapsedMs: null });
       }
     }

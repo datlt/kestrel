@@ -28,7 +28,7 @@ import { describeError } from './errors';
 import { copyName, removeConnection, upsertConnection } from './form-model';
 import type { DbHub } from './hub';
 import { AUTO_CONNECT_LIMIT, copyForSaving, ideaGroupLabel, runLimited } from './idea-model';
-import { connTabId, connTabInput, ddlTabInput, openConsole } from './tabs';
+import { connTabId, connTabInput, ddlTabInput, openConsole, putSqlInConsole } from './tabs';
 import {
   collectOpen,
   connectionNode,
@@ -37,8 +37,9 @@ import {
   flatten,
   groupNodes,
   ideaGroupNode,
+  isTrinoConfig,
   reset,
-  selectTopSql,
+  selectSql,
   tableChildren,
   visibleDatabases,
   type IdeaInfo,
@@ -157,7 +158,7 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     if (disposed) return;
     rows = flatten(roots);
     spacer.style.height = `${rows.length * ROW_H}px`;
-    message.textContent = roots.length === 0 ? 'No connections yet. Click + to add a MySQL connection.' : '';
+    message.textContent = roots.length === 0 ? 'No connections yet. Click + to add a MySQL or Trino connection.' : '';
     message.hidden = roots.length > 0;
     paint();
   }
@@ -205,8 +206,15 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     for (const t of n.tags ?? []) el.append(h('span', { class: 'db-tag' }, t));
     if (n.kind === 'idea-group') el.append(h('span', { class: 'db-badge db-badge-idea', title: 'Data sources of .idea/dataSources.xml' }, 'IntelliJ'));
     if (n.kind === 'connection' && n.config) {
+      // Trino with the OAuth2 login: the connect call waits for the browser.
+      if (hub.loginWaiting(n.connId)) {
+        el.append(
+          h('span', { class: 'db-conn-state is-connecting' }, 'Waiting for login in your browser…'),
+          h('button', { class: 'db-link', type: 'button', title: 'Stop waiting for the login', onclick: (e: Event) => { e.stopPropagation(); hub.cancelConnect(n.connId); } }, 'Cancel'),
+        );
+      }
       if (n.config.source) el.append(h('span', { class: 'db-badge db-badge-idea', title: 'This connection comes from the IntelliJ project' }, 'IntelliJ'));
-      if (n.conn) el.append(connState(n));
+      if (n.conn && !hub.loginWaiting(n.connId)) el.append(connState(n));
       if (n.config.production) el.append(h('span', { class: 'db-badge db-badge-prod', title: 'Production connection' }, 'PROD'));
       if (n.config.readOnly) el.append(h('span', { class: 'db-badge', title: 'Read-only connection' }, 'READ-ONLY'));
     }
@@ -251,13 +259,15 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
       } else if (node.kind === 'database' && node.database) {
         const db = node.database;
         const objs = await meta.run((sid) => dbObjects(sid, db));
-        node.children = groupNodes(node.connId, db, objs);
+        node.children = groupNodes(node.connId, db, objs, isTrinoConfig(hub.find(node.connId)));
       } else if (node.kind === 'object' && node.database && node.name) {
         const { database, name } = node;
+        const trino = isTrinoConfig(hub.find(node.connId));
         // One session answers one call at a time, so the calls run one after the other.
         const [cols, idx] = await meta.run(async (sid) => {
           const c = await dbColumns(sid, database, name);
-          const i = await dbIndexes(sid, database, name).catch(() => []);
+          // Trino has no indexes.
+          const i = trino ? [] : await dbIndexes(sid, database, name).catch(() => []);
           return [c, i] as const;
         });
         node.children = tableChildren(node.connId, database, name, cols, idx);
@@ -415,6 +425,20 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     ctx.tabs.open(ddlTabInput(hub, { connId: n.connId, database: n.database, name: n.name, kind: n.objectKind }));
   }
 
+  /** `SELECT * FROM ... LIMIT 100;` for a table or view row, quoted for the engine of its connection. */
+  function selectTextOf(n: TreeNode): string | null {
+    if (n.kind !== 'object' || (n.objectKind !== 'table' && n.objectKind !== 'view') || !n.database || !n.name) return null;
+    return selectSql(hub.find(n.connId), n.database, n.name);
+  }
+
+  /** Opens the context menu of a row from the keyboard (menu key or Shift-F10), below the row. */
+  function menuAtRow(n: TreeNode): void {
+    const el = [...rowsEl.children].find((c) => (c as HTMLElement).dataset.id === n.id);
+    const r = (el ?? scroller).getBoundingClientRect();
+    const e = new MouseEvent('contextmenu', { clientX: r.left + 28, clientY: el ? r.bottom : r.top + 20, bubbles: true, cancelable: true });
+    ctx.ui.contextMenu(e, menuFor(n));
+  }
+
   function menuFor(n: TreeNode): MenuItem[] {
     const items: MenuItem[] = [];
     const refresh: MenuItem = { label: 'Refresh', run: () => void refreshNode(n), disabled: !expandable(n), separatorBefore: true };
@@ -454,10 +478,13 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
       case 'object': {
         const table = n.objectKind === 'table' || n.objectKind === 'view';
         if (table && n.database && n.name) {
+          const text = selectTextOf(n) ?? '';
           items.push({
             label: 'Select Top 100',
-            run: () => openConsole(hub, { connId: n.connId, database: n.database, text: selectTopSql(n.database!, n.name!), autoRun: true }),
+            run: () => openConsole(hub, { connId: n.connId, database: n.database, text, autoRun: true }),
           });
+          items.push({ label: 'Generate SELECT', run: () => putSqlInConsole(hub, n.connId, n.database, text) });
+          items.push({ label: 'Copy SELECT', run: () => void copyText(text) });
           items.push({ label: 'New SQL Console', run: () => openConsole(hub, { connId: n.connId, database: n.database }) });
         }
         items.push({ label: 'Show DDL', run: () => showDdl(n), separatorBefore: table });
@@ -523,6 +550,13 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
         paint();
       }
     };
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      if (cur) {
+        menuAtRow(cur.node);
+        e.preventDefault();
+      }
+      return;
+    }
     switch (e.key) {
       case 'ArrowDown': move(i + 1); break;
       case 'ArrowUp': move(i < 0 ? 0 : i - 1); break;
@@ -584,6 +618,8 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     if (e.settings['db.idea.autoConnect'] && !e.previous['db.idea.autoConnect']) maybeAutoConnect();
   });
 
+  // A browser login starts or ends: the rows show or hide "Waiting for login".
+  const loginOff = hub.onLoginChange(() => render());
   const ideaSub = hub.idea.onChange(() => {
     buildRoots();
     render();
@@ -597,6 +633,14 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
     selected() {
       const n = selectedId ? find(selectedId) : null;
       return n ? { connId: n.connId, database: n.database, name: n.name, objectKind: n.objectKind } : null;
+    },
+    selectAction(what) {
+      const n = selectedId ? find(selectedId) : null;
+      const text = n ? selectTextOf(n) : null;
+      if (!n || !text) return false;
+      if (what === 'copy') void copyText(text);
+      else putSqlInConsole(hub, n.connId, n.database, text);
+      return true;
     },
   };
 
@@ -619,6 +663,7 @@ export function createDatabaseView(hub: DbHub, host: HTMLElement): ViewInstance 
       disposed = true;
       sub.dispose();
       ideaSub.dispose();
+      loginOff();
       activatedSub.dispose();
       if (hub.tree) hub.tree = null;
     },

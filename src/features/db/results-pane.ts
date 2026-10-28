@@ -1,11 +1,13 @@
 // Shows a ResultsStore: one tab per result table plus the Messages tab.
 // A SQL console and the bottom panel `db-results` both use it.
 
+import { createElement, Download } from 'lucide';
 import type { AppContext } from '../../core/types';
 import { h } from '../../core/dom';
+import type { DbValue } from '../../ipc/db';
 import { formatDuration, rowCountNote } from './grid-data';
 import type { ResultGrid } from './grid';
-import { formatTime, messageSql, type ResultsStore } from './results-store';
+import { formatTime, messageSql, type ResultEntry, type ResultsStore } from './results-store';
 import './db.css';
 
 const MESSAGES = 'messages';
@@ -23,6 +25,17 @@ export class ResultsPane {
   private readonly bodyEl = h('div', { class: 'db-rp-body' });
   private readonly messagesEl = h('div', { class: 'db-msgs', tabindex: '0' });
   private readonly emptyEl: HTMLElement;
+  private downloading = false;
+  private readonly csvBtn = h(
+    'button',
+    { class: 'db-btn db-tool db-rp-csv', type: 'button', title: 'Download the rows of this result as a CSV file', onclick: () => void this.download() },
+    createElement(Download),
+    h('span', null, 'Download CSV'),
+  );
+  /** Shown while "All rows" is written. Cancel stops the query. */
+  private readonly progressText = h('span', { class: 'db-rp-progress-text' });
+  private readonly progressCancel = h('button', { class: 'db-btn', type: 'button' }, 'Cancel');
+  private readonly progressEl = h('div', { class: 'db-rp-progress', role: 'status' }, h('span', { class: 'db-rp-spinner', 'aria-hidden': 'true' }), this.progressText, this.progressCancel);
   readonly root: HTMLElement;
 
   constructor(
@@ -33,7 +46,14 @@ export class ResultsPane {
   ) {
     this.emptyEl = h('div', { class: 'db-rp-empty' }, emptyText);
     this.bodyEl.append(this.messagesEl);
-    this.root = h('div', { class: 'db-rp' }, h('div', { class: 'db-rp-head' }, this.tabs, h('span', { class: 'db-spacer' }), this.note), this.bodyEl);
+    this.progressEl.hidden = true;
+    this.root = h(
+      'div',
+      { class: 'db-rp' },
+      h('div', { class: 'db-rp-head' }, this.tabs, h('span', { class: 'db-spacer' }), this.note, this.csvBtn),
+      this.progressEl,
+      this.bodyEl,
+    );
     host.append(this.root);
     this.off = store.onChange(() => this.update());
     this.lastRun = store.runId;
@@ -92,6 +112,42 @@ export class ResultsPane {
     const cur = s.results.find((r) => r.id === this.active);
     this.note.textContent = cur ? `${rowCountNote(cur.result.rows.length, cur.result.truncated)} in ${formatDuration(cur.result.elapsedMs)}` : '';
     this.note.classList.toggle('db-warn', !!cur?.result.truncated);
+    this.csvBtn.hidden = !cur;
+  }
+
+  // --- Download CSV ------------------------------------------------------------------------
+
+  private currentEntry(): ResultEntry | null {
+    return this.store.results.find((r) => r.id === this.active) ?? null;
+  }
+
+  /** The header button. The grid knows the sort order, so it gives the rows when it is ready. */
+  private async download(entry: ResultEntry | null = this.currentEntry(), rows?: DbValue[][]): Promise<void> {
+    if (!entry || this.downloading) return;
+    this.downloading = true;
+    this.csvBtn.disabled = true;
+    try {
+      const { downloadCsv } = await import('./export-csv');
+      await downloadCsv({
+        ctx: this.ctx,
+        entry,
+        rows: rows ?? this.grids.get(entry.id)?.grid?.csvRows() ?? entry.result.rows,
+        progress: {
+          start: (text, cancel) => {
+            this.progressText.textContent = text;
+            this.progressCancel.onclick = cancel;
+            this.progressEl.hidden = false;
+          },
+          stop: () => {
+            this.progressEl.hidden = true;
+            this.progressCancel.onclick = null;
+          },
+        },
+      });
+    } finally {
+      this.downloading = false;
+      this.csvBtn.disabled = false;
+    }
   }
 
   private tab(id: number | typeof MESSAGES, label: HTMLElement, extra: HTMLElement, selected: boolean): HTMLElement {
@@ -116,7 +172,7 @@ export class ResultsPane {
       // The grid code is a separate chunk. It loads when the first result arrives.
       void import('./grid').then(({ ResultGrid }) => {
         if (this.disposed || this.grids.get(r.id) !== entry) return;
-        entry.grid = new ResultGrid(this.ctx, el);
+        entry.grid = new ResultGrid(this.ctx, el, { downloadCsv: (rows) => void this.download(r, rows) });
         entry.grid.setResult(r.result);
         if (r.id === this.active) entry.grid.refresh();
       });

@@ -7,6 +7,17 @@ const rows = (n: number, extra: Partial<DbResult> = {}): DbResult => ({
   lastInsertId: null, warnings: 0, info: null, elapsedMs: 1, ...extra,
 });
 
+describe('ResultsStore exporter', () => {
+  it('keeps the exporter of a result', () => {
+    const s = new ResultsStore();
+    const exporter = { exportAll: async () => ({ rows: 1, bytes: 1, elapsedMs: 1 }), cancel() {}, busy: () => false };
+    s.addResult('select 1', rows(1), exporter);
+    s.addResult('select 2', rows(1));
+    expect(s.results[0].exporter).toBe(exporter);
+    expect(s.results[1].exporter).toBeUndefined();
+  });
+});
+
 describe('ResultsStore', () => {
   it('keeps messages and drops results at a new run', () => {
     const s = new ResultsStore();

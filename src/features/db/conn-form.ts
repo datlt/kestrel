@@ -4,7 +4,7 @@
 
 import { h } from '../../core/dom';
 import type { TabContent } from '../../core/types';
-import { dbPasswordDelete, dbPasswordExists, dbPasswordSet, dbTest, type DbSslMode } from '../../ipc/db';
+import { dbPasswordDelete, dbPasswordExists, dbPasswordSet, dbTest, type DbDriver, type DbSslMode, type DbTrinoAuth } from '../../ipc/db';
 import { describeError } from './errors';
 import {
   blankDraft,
@@ -14,6 +14,8 @@ import {
   sameDraft,
   upsertConnection,
   validateDraft,
+  withDriver,
+  withSsl,
   type ConnDraft,
   type DraftErrors,
   type DraftField,
@@ -52,6 +54,13 @@ export class ConnectionForm implements TabContent {
   private readonly passwordInput = h('input', { class: 'db-input', type: 'password', id: `${this.uid}-pw`, autocomplete: 'new-password', spellcheck: 'false' });
   private readonly keychainBox = h('input', { type: 'checkbox', id: `${this.uid}-kc` });
   private readonly sshBox = h('div', { class: 'db-form-group' });
+  /** Parts of the form that depend on the engine (MySQL or Trino) and on the Trino login. */
+  private readonly mysqlOnly: HTMLElement[] = [];
+  private readonly trinoOnly: HTMLElement[] = [];
+  private readonly passwordOnly: HTMLElement[] = [];
+  private readonly oauthHint = h('div', { class: 'db-hint' }, 'Kestrel opens your browser to log in. Use the same login as for Trino in your browser. Waiting can take up to 3 minutes.');
+  private dbLabel!: HTMLElement;
+  private sslSelect!: HTMLSelectElement;
 
   constructor(
     private readonly hub: DbHub,
@@ -64,16 +73,31 @@ export class ConnectionForm implements TabContent {
     this.initial = { ...this.draft };
     this.tabId = connTabId(id);
 
-    const ssl = h(
-      'select',
-      { class: 'db-input', id: `${this.uid}-ssl` },
-      h('option', { value: 'preferred' }, 'Preferred: use TLS when the server offers it'),
-      h('option', { value: 'required' }, 'Required: fail when TLS is not possible'),
-      h('option', { value: 'disabled' }, 'Disabled: no TLS'),
-    );
+    const ssl = h('select', { class: 'db-input', id: `${this.uid}-ssl` });
+    this.sslSelect = ssl;
     this.inputs.set('ssl', ssl);
-    ssl.value = this.draft.ssl;
-    ssl.addEventListener('change', () => this.set('ssl', ssl.value as DbSslMode));
+    ssl.addEventListener('change', () => this.replaceDraft(withSsl(this.draft, ssl.value as DbSslMode)));
+
+    const driver = h(
+      'select',
+      { class: 'db-input', id: `${this.uid}-driver` },
+      h('option', { value: 'mysql' }, 'MySQL'),
+      h('option', { value: 'trino' }, 'Trino'),
+    );
+    driver.value = this.draft.driver;
+    this.inputs.set('driver', driver);
+    driver.addEventListener('change', () => this.replaceDraft(withDriver(this.draft, driver.value as DbDriver)));
+
+    const auth = h(
+      'select',
+      { class: 'db-input', id: `${this.uid}-trinoAuth` },
+      h('option', { value: 'none' }, 'None: only the user name'),
+      h('option', { value: 'password' }, 'Password (HTTPS)'),
+      h('option', { value: 'oauth2' }, 'OAuth2: login in the browser'),
+    );
+    auth.value = this.draft.trinoAuth;
+    this.inputs.set('trinoAuth', auth);
+    auth.addEventListener('change', () => this.set('trinoAuth', auth.value as DbTrinoAuth));
 
     const colorRow = h('div', { class: 'db-color-row' });
     const colorInput = h('input', { type: 'color', class: 'db-color-input', value: this.draft.color || '#3e8ef7', 'aria-label': 'Custom color' });
@@ -129,31 +153,40 @@ export class ConnectionForm implements TabContent {
         this.heading,
         h('div', { class: 'db-form-group' },
           this.field('Name', this.text('name', 'Shop (production)'), 'name'),
+          this.field('Driver', driver, 'driver'),
           this.field('Host', this.text('host', '127.0.0.1'), 'host'),
           this.field('Port', this.text('port', '3306', 'numeric'), 'port'),
           this.field('User', this.text('user', 'root'), 'user'),
-          this.field(
-            'Password',
-            h(
-              'div',
-              null,
-              this.passwordInput,
-              h('label', { class: 'db-check', for: `${this.uid}-kc` }, this.keychainBox, 'Save password in keychain'),
-              h('div', { class: 'db-hint' }, 'The password is stored in the keychain of your operating system, never in settings.json. Without it, Kestrel asks when the server refuses the login.'),
+          this.only(this.trinoOnly, this.field('Login', h('div', null, auth, this.oauthHint), 'trinoAuth')),
+          this.only(
+            this.passwordOnly,
+            this.field(
+              'Password',
+              h(
+                'div',
+                null,
+                this.passwordInput,
+                h('label', { class: 'db-check', for: `${this.uid}-kc` }, this.keychainBox, 'Save password in keychain'),
+                h('div', { class: 'db-hint' }, 'The password is stored in the keychain of your operating system, never in settings.json. Without it, Kestrel asks when the server refuses the login.'),
+              ),
             ),
           ),
+          this.only(this.trinoOnly, this.field('Catalog', this.text('catalog', 'For example hive'), 'catalog')),
           this.field('Database', this.text('database', 'Optional: default database'), 'database'),
           this.field('TLS', ssl),
         ),
-        h('h3', { class: 'db-form-section' }, 'SSH Tunnel'),
-        h('div', { class: 'db-form-group' },
-          h('label', { class: 'db-check', for: `${this.uid}-ssh` }, sshToggle, 'Connect through an SSH tunnel'),
-          this.sshBox,
+        this.only(this.mysqlOnly, h('h3', { class: 'db-form-section' }, 'SSH Tunnel')),
+        this.only(
+          this.mysqlOnly,
+          h('div', { class: 'db-form-group' },
+            h('label', { class: 'db-check', for: `${this.uid}-ssh` }, sshToggle, 'Connect through an SSH tunnel'),
+            this.sshBox,
+          ),
         ),
         h('h3', { class: 'db-form-section' }, 'Safety and Options'),
         h('div', { class: 'db-form-group' },
           this.check('production', 'Production database', 'Shows a red bar in consoles and asks before statements that change data.'),
-          this.check('readOnly', 'Read-only', 'Every session runs SET SESSION TRANSACTION READ ONLY after it connects.'),
+          this.check('readOnly', 'Read-only', 'MySQL: every session runs SET SESSION TRANSACTION READ ONLY after it connects. Trino: Kestrel refuses statements other than SELECT, WITH, SHOW, DESCRIBE, EXPLAIN and VALUES.'),
           this.field('Color', colorRow),
           this.field('Run after connect', this.area('initSql', "SET time_zone = '+09:00'"), 'initSql'),
           this.field('Connect timeout', h('div', { class: 'db-inline' }, this.text('connectTimeoutSec', '10', 'numeric'), h('span', { class: 'db-faint' }, 'seconds')), 'connectTimeoutSec'),
@@ -163,6 +196,8 @@ export class ConnectionForm implements TabContent {
       ),
     );
     host.append(this.root);
+    this.dbLabel = this.inputs.get('database')!.closest('.db-field')!.querySelector('.db-field-label')!;
+    this.applyEngine();
     this.refreshHeading();
     this.deleteBtn.hidden = this.isNew;
 
@@ -219,8 +254,48 @@ export class ConnectionForm implements TabContent {
     return h('div', { class: 'db-field' }, h('span', { class: 'db-field-label' }), h('div', { class: 'db-field-body' }, h('label', { class: 'db-check', for: `${this.uid}-${key}` }, box, label), h('div', { class: 'db-hint' }, hint)));
   }
 
+  /** Remembers a part of the form that only some engines or logins use. */
+  private only(list: HTMLElement[], el: HTMLElement): HTMLElement {
+    list.push(el);
+    return el;
+  }
+
+  /** Replaces the whole draft (engine or TLS changed: port and login can change too) and shows it. */
+  private replaceDraft(next: ConnDraft): void {
+    this.draft = next;
+    for (const [key, input] of this.inputs) {
+      const v = String(next[key]);
+      if (input.value !== v && !(input === this.sslSelect)) input.value = v;
+    }
+    this.applyEngine();
+    this.markDirty();
+    if (this.shownErrors) this.showErrors(validateDraft(this.draft));
+  }
+
+  /** Shows the fields of the chosen engine and login. */
+  private applyEngine(): void {
+    const trino = this.draft.driver === 'trino';
+    for (const el of this.mysqlOnly) el.hidden = trino;
+    for (const el of this.trinoOnly) el.hidden = !trino;
+    for (const el of this.passwordOnly) el.hidden = trino && this.draft.trinoAuth !== 'password';
+    this.oauthHint.hidden = !(trino && this.draft.trinoAuth === 'oauth2');
+    this.dbLabel.textContent = trino ? 'Schema' : 'Database';
+    const db = this.inputs.get('database');
+    if (db) db.setAttribute('placeholder', trino ? 'Optional: default schema' : 'Optional: default database');
+    this.inputs.get('port')?.setAttribute('placeholder', trino ? '443' : '3306');
+    // Trino knows only https and http. MySQL has three TLS modes.
+    const options: [DbSslMode, string][] = trino
+      ? [['required', 'Required: use https'], ['disabled', 'Disabled: use http (no TLS)']]
+      : [['preferred', 'Preferred: use TLS when the server offers it'], ['required', 'Required: fail when TLS is not possible'], ['disabled', 'Disabled: no TLS']];
+    this.sslSelect.replaceChildren(...options.map(([value, text]) => h('option', { value }, text)));
+    this.sslSelect.value = this.draft.ssl;
+    const auth = this.inputs.get('trinoAuth');
+    if (auth) auth.value = this.draft.trinoAuth;
+  }
+
   private set<K extends DraftField>(key: K, value: ConnDraft[K]): void {
     this.draft[key] = value;
+    if (key === 'trinoAuth') this.applyEngine();
     this.markDirty();
     if (this.shownErrors) this.showErrors(validateDraft(this.draft));
   }
@@ -265,12 +340,24 @@ export class ConnectionForm implements TabContent {
     const token = ++this.testToken;
     this.testBtn.disabled = true;
     this.testResult.className = 'db-test-result';
-    this.testResult.textContent = 'Connecting...';
+    const browserLogin = config.driver === 'trino' && config.trinoAuth === 'oauth2';
+    if (browserLogin) {
+      // The login can take up to 3 minutes. Cancel only closes the wait in this form.
+      const stop = h('button', { class: 'db-link', type: 'button', onclick: () => {
+        this.testToken++;
+        this.testBtn.disabled = false;
+        this.testResult.textContent = 'Login cancelled.';
+      } }, 'Cancel');
+      this.testResult.replaceChildren('Waiting for login in your browser…', stop);
+    } else {
+      this.testResult.textContent = 'Connecting...';
+    }
     try {
-      const r = await dbTest({ config, password: this.password || this.hub.getPassword(this.id) });
+      const usePassword = config.driver !== 'trino' || config.trinoAuth === 'password';
+      const r = await dbTest({ config, password: usePassword ? this.password || this.hub.getPassword(this.id) : null });
       if (token !== this.testToken || this.disposed) return;
       this.testResult.className = 'db-test-result is-ok';
-      this.testResult.textContent = `Connected. MySQL server version ${r.serverVersion}.`;
+      this.testResult.textContent = `Connected. ${config.driver === 'trino' ? 'Trino' : 'MySQL'} server version ${r.serverVersion}.`;
     } catch (e) {
       if (token !== this.testToken || this.disposed) return;
       this.testResult.className = 'db-test-result is-error';

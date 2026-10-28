@@ -20,6 +20,8 @@ export interface ConsoleSpec {
   database?: string | null;
   /** Run the text as soon as the console opens (Select Top 100). */
   autoRun?: boolean;
+  /** Select all the text when the console opens (Generate SELECT). */
+  selectText?: boolean;
 }
 
 export const consoleTabId = (connId: string, n: number) => `sqlconsole:${connId}:${n}`;
@@ -74,6 +76,23 @@ export function openConsole(hub: DbHub, spec: Omit<ConsoleSpec, 'n'>): void {
   let n = 1;
   while (hub.ctx.tabs.get(consoleTabId(spec.connId, n))) n++;
   hub.ctx.tabs.open(consoleTabInput(hub, { ...spec, n }));
+}
+
+/**
+ * "Generate SELECT": puts `text` into the console of the connection that was used
+ * last, as a new last line, selected, and focuses the editor. With no open console
+ * of that connection it opens a new one. Nothing runs: the user presses Mod-Enter.
+ */
+export function putSqlInConsole(hub: DbHub, connId: string, database: string | undefined, text: string): void {
+  const recent = hub.mostRecentConsole(connId);
+  const tab = recent ? hub.ctx.tabs.get(recent.tabId) : undefined;
+  if (recent && tab && recent.target.appendSql) {
+    // Opening a tab that is already open only shows it.
+    hub.ctx.tabs.open(tab.input);
+    recent.target.appendSql(text);
+    return;
+  }
+  openConsole(hub, { connId, database, text, selectText: true });
 }
 
 // --- Connection form ------------------------------------------------------------------

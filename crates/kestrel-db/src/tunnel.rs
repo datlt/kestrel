@@ -296,6 +296,9 @@ mod tests {
         ConnectionConfig {
             id: "c1".into(),
             name: "n".into(),
+            driver: crate::types::Driver::Mysql,
+            catalog: None,
+            trino_auth: None,
             host: "db.internal".into(),
             port: 3306,
             user: "root".into(),

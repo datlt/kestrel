@@ -436,6 +436,7 @@ struct Parsed {
 fn build(raw: &Raw, project_root: &str, ssh_configs: &[SshConfig]) -> Parsed {
     let jdbc = parse_jdbc(&raw.url);
     let sub = jdbc.as_ref().map(|j| j.sub.clone()).unwrap_or_default();
+    let trino_like = if sub.is_empty() { raw.driver.starts_with("trino") } else { sub == "trino" };
     let mysql_like = if sub.is_empty() {
         raw.driver.starts_with("mysql") || raw.driver.starts_with("mariadb")
     } else {
@@ -444,7 +445,7 @@ fn build(raw: &Raw, project_root: &str, ssh_configs: &[SshConfig]) -> Parsed {
     let driver = if raw.driver.is_empty() { sub.clone() } else { raw.driver.clone() };
 
     let mut reason: Option<String> = None;
-    if !mysql_like {
+    if !mysql_like && !trino_like {
         reason = Some(format!("{} is not supported yet", driver_display(&raw.driver, &sub)));
     } else if jdbc.is_none() {
         reason = Some("Kestrel cannot read the JDBC URL of this data source".into());
@@ -481,18 +482,37 @@ fn build(raw: &Raw, project_root: &str, ssh_configs: &[SshConfig]) -> Parsed {
         }
     }
 
+    // Trino URL: `jdbc:trino://host[:port][/catalog[/schema]][?params]`.
+    // The path holds the catalog and the schema, so `database` of the URL is split here.
+    let trino_ssl = jdbc.as_ref().is_some_and(|j| j.param("SSL").is_some_and(truthy) || j.port == Some(443));
     let (host, port) = match &jdbc {
+        Some(j) if trino_like => (j.host.clone(), j.port.unwrap_or(if trino_ssl { 443 } else { 8080 })),
         Some(j) => (j.host.clone(), j.port.unwrap_or(if mysql_like { DEFAULT_MYSQL_PORT } else { 0 })),
         None => (String::new(), 0),
     };
+    let (catalog, database, ssl, driver_kind, trino_auth) = if trino_like {
+        let path = jdbc.as_ref().and_then(|j| j.database.clone()).unwrap_or_default();
+        let mut parts = path.splitn(2, '/');
+        let catalog = parts.next().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+        let schema = parts.next().map(|s| s.trim_end_matches('/').trim()).filter(|s| !s.is_empty()).map(str::to_string);
+        let ssl = if trino_ssl { SslMode::Required } else { SslMode::Disabled };
+        // A user name with SSL means password login. Otherwise only the user header.
+        let auth = if !user.is_empty() && trino_ssl { TrinoAuth::Password } else { TrinoAuth::None };
+        (catalog, schema, ssl, Driver::Trino, Some(auth))
+    } else {
+        (None, jdbc.as_ref().and_then(|j| j.database.clone()), jdbc.as_ref().map(ssl_from).unwrap_or_default(), Driver::Mysql, None)
+    };
     let config = ConnectionConfig {
+        driver: driver_kind,
+        catalog,
+        trino_auth,
         id: format!("idea:{}", raw.uuid),
         name: if raw.name.is_empty() { raw.uuid.clone() } else { raw.name.clone() },
         host,
         port,
         user,
-        database: jdbc.as_ref().and_then(|j| j.database.clone()),
-        ssl: jdbc.as_ref().map(ssl_from).unwrap_or_default(),
+        database,
+        ssl,
         ssh,
         read_only: raw.read_only,
         production: is_production_name(&raw.name),
@@ -505,6 +525,9 @@ fn build(raw: &Raw, project_root: &str, ssh_configs: &[SshConfig]) -> Parsed {
         config,
         driver,
         supported: reason.is_none(),
+        // IntelliJ keeps most passwords in its `master_key` file or a KeePass store.
+        // Kestrel cannot read those. Without a password in the XML, the OS keychain
+        // (or a prompt in the UI) is the only source.
         password_source: if password.is_some() { PasswordSource::File } else { PasswordSource::Keychain },
         reason,
     };
@@ -755,14 +778,46 @@ mod tests {
     }
 
     #[test]
-    fn trino_is_not_supported() {
+    fn trino_source_is_mapped() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "dataSources.xml", &file(&[ds("T real", "u-1", "trino", "jdbc:trino://t.example.test:443/hive?SSL=true", "")]));
-        let s = &list_in(dir.path()).sources[0];
-        assert!(!s.supported);
-        assert_eq!(s.reason.as_deref(), Some("Trino is not supported yet"));
-        assert_eq!(s.driver, "trino");
-        assert_eq!(s.config.host, "t.example.test");
+        let local = r#"<project version="4"><component name="dataSourceStorageLocal"><data-source name="x" uuid="u-1"><user-name>alice</user-name></data-source></component></project>"#;
+        write(dir.path(), "dataSources.local.xml", local);
+        write(
+            dir.path(),
+            "dataSources.xml",
+            &file(&[
+                ds("T real", "u-1", "trino", "jdbc:trino://t.example.test:443/hive/sales?SSL=true", ""),
+                ds("plain", "u-2", "trino", "jdbc:trino://t2.example.test/hive?user=bob", ""),
+                ds("anon", "u-3", "trino", "jdbc:trino://t3.example.test:8443", ""),
+                ds("tls no user", "u-4", "trino", "jdbc:trino://t4.example.test/c/s/?SSL=true", ""),
+                ds("pg", "u-5", "postgresql", "jdbc:postgresql://p.example.test/db", ""),
+            ]),
+        );
+        let l = list_in(dir.path());
+        let s = &l.sources;
+        assert!(s[0].supported && s[0].reason.is_none());
+        assert_eq!(s[0].driver, "trino");
+        let c = &s[0].config;
+        assert_eq!((c.driver, c.host.as_str(), c.port), (Driver::Trino, "t.example.test", 443));
+        assert_eq!((c.catalog.as_deref(), c.database.as_deref(), c.ssl), (Some("hive"), Some("sales"), SslMode::Required));
+        assert_eq!((c.user.as_str(), c.trino_auth), ("alice", Some(TrinoAuth::Password)));
+        assert!(c.production);
+        assert_eq!(s[0].password_source, PasswordSource::Keychain);
+
+        let c = &s[1].config;
+        assert_eq!((c.port, c.ssl, c.user.as_str(), c.trino_auth), (8080, SslMode::Disabled, "bob", Some(TrinoAuth::None)));
+        assert_eq!((c.catalog.as_deref(), c.database.as_deref()), (Some("hive"), None));
+
+        let c = &s[2].config;
+        assert_eq!((c.port, c.ssl, c.catalog.clone(), c.trino_auth), (8443, SslMode::Disabled, None, Some(TrinoAuth::None)));
+
+        // SSL on, no user name: nothing to log in with, so `none`.
+        let c = &s[3].config;
+        assert_eq!((c.catalog.as_deref(), c.database.as_deref(), c.trino_auth), (Some("c"), Some("s"), Some(TrinoAuth::None)));
+
+        assert!(!s[4].supported);
+        assert_eq!(s[4].reason.as_deref(), Some("PostgreSQL is not supported yet"));
+        assert_eq!(s[4].config.driver, Driver::Mysql);
     }
 
     #[test]
