@@ -20,6 +20,7 @@ kestrel-search = { path = "crates/kestrel-search" }
 kestrel-git = { path = "crates/kestrel-git" }
 kestrel-lsp = { path = "crates/kestrel-lsp" }
 kestrel-markdown = { path = "crates/kestrel-markdown" }
+kestrel-db = { path = "crates/kestrel-db" }
 
 [profile.release]
 codegen-units = 1

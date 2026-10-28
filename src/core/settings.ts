@@ -48,6 +48,10 @@ export const DEFAULT_SETTINGS: Settings = {
     },
   },
   'search.maxResults': 20000,
+  'db.connections': [],
+  'db.maxRows': 1000,
+  'db.confirmWrites': 'production',
+  'db.showSystemSchemas': false,
 };
 
 /** JSON with // and /* comments and trailing commas (like VS Code settings). */

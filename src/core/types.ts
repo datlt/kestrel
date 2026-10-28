@@ -179,6 +179,14 @@ export interface Settings {
   'lsp.enabled': boolean;
   'lsp.servers': Record<string, LspServerConfig>;
   'search.maxResults': number;
+  /** Saved database connections (no passwords; see src/ipc/db.ts). */
+  'db.connections': import('../ipc/db').DbConnectionConfig[];
+  /** Rows to fetch per result set in SQL consoles. */
+  'db.maxRows': number;
+  /** Ask before statements that change data: on production connections only, always, or never. */
+  'db.confirmWrites': 'production' | 'always' | 'never';
+  /** Show mysql, sys, information_schema and performance_schema in the database tree. */
+  'db.showSystemSchemas': boolean;
 }
 
 export interface SettingsService {
@@ -216,6 +224,12 @@ export interface TabContent {
   isDirty?(): boolean;
   /** Saves the content. Returns false when the user cancelled or saving failed. */
   save?(): Promise<boolean>;
+  /**
+   * Asks the user before the tab closes (not called for forced closes).
+   * Return false to keep the tab open. When a tab has this hook, the shell
+   * does not show its own Save / Don't Save dialog for it.
+   */
+  confirmClose?(): Promise<boolean>;
   /** Zoom step: 1 = in, -1 = out, 0 = reset. Return true when handled. */
   zoom?(step: 1 | -1 | 0): boolean;
 }

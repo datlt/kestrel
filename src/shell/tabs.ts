@@ -220,7 +220,13 @@ export function createTabModel(ctx: Pick<AppContext, 'bus'>, ui: Pick<UiService,
     if (rec.removed) return Promise.resolve(true);
     if (rec.closing) return rec.closing;
     const p = (async () => {
-      if (!force && isDirty(rec) && !(await askSave(rec))) return false;
+      if (!force) {
+        if (rec.content?.confirmClose) {
+          if (!(await rec.content.confirmClose())) return false;
+        } else if (isDirty(rec) && !(await askSave(rec))) {
+          return false;
+        }
+      }
       if (!rec.removed) removeTab(rec, { record, activateNext: true });
       return true;
     })();

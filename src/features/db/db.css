@@ -1,0 +1,254 @@
+/* Database feature. All classes start with `db-`. Colors come from the theme
+   variables of src/styles/vars.css, so both themes work. */
+
+[class*='db-'][hidden] { display: none !important; }
+
+.db-spacer { flex: 1; }
+.db-faint { color: var(--fg-faint); }
+.db-warn { color: var(--warn); }
+.db-sep { width: 1px; height: 16px; background: var(--border); flex: none; }
+
+/* --- Buttons and inputs --------------------------------------------------- */
+.db-btn {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.db-btn:hover:not([disabled]) { background: var(--hover); }
+.db-btn[disabled] { opacity: 0.45; cursor: default; }
+.db-btn:focus-visible, .db-input:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.db-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.db-btn-primary:hover:not([disabled]) { background: var(--accent); filter: brightness(1.12); }
+.db-btn-danger { color: var(--danger); }
+.db-tool { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; }
+.db-tool svg, .db-icon-btn svg { width: 14px; height: 14px; flex: none; }
+.db-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; padding: 0; border-color: transparent; }
+.db-link { background: none; border: 0; padding: 0 4px; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
+.db-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+.db-area { height: auto; padding: 6px 8px; font-family: var(--font-mono); resize: vertical; }
+select.db-input { padding: 0 4px; }
+
+.db-badge {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  line-height: 15px;
+  letter-spacing: 0.04em;
+}
+.db-badge-prod { color: var(--danger); border-color: var(--danger); }
+.db-badge-tx { color: var(--warn); border-color: var(--warn); }
+.db-tag { flex: none; padding: 0 4px; border-radius: 3px; background: var(--hover); color: var(--fg-muted); font-size: 10px; line-height: 15px; }
+.db-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--fg-faint); }
+
+/* --- Dialogs inside the workbench --------------------------------------------- */
+.db-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 14vh;
+  background: rgba(0, 0, 0, 0.35);
+}
+.db-modal {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(420px, 92vw);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+.db-modal-title { font-weight: 600; }
+.db-modal-detail { color: var(--fg-muted); font-family: var(--font-mono); font-size: 12px; }
+.db-modal-error { color: var(--danger); font-size: 12px; word-break: break-word; }
+.db-modal-hint { color: var(--fg-muted); font-size: 12px; line-height: 1.4; }
+.db-modal-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* --- Tree (sidebar) ------------------------------------------------------------ */
+.db-tree { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.db-tree-toolbar { display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 6px 0 10px; flex: none; }
+.db-tree-title { color: var(--fg-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.db-tree-list { position: relative; flex: 1; min-height: 0; overflow: auto; outline: none; }
+.db-tree-spacer { width: 1px; }
+.db-tree-rows { position: absolute; inset: 0 0 auto 0; }
+.db-tree-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  box-sizing: border-box;
+  padding-right: 8px;
+  white-space: nowrap;
+  cursor: default;
+}
+.db-tree-row:hover { background: var(--hover); }
+.db-tree-row.is-selected { background: var(--active); }
+.db-tree-list:focus-visible .db-tree-row.is-selected { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.db-chev { flex: none; display: inline-flex; width: 14px; height: 14px; color: var(--fg-muted); }
+.db-chev svg { width: 14px; height: 14px; }
+.db-tree-icon { flex: none; width: 14px; height: 14px; color: var(--fg-muted); }
+.db-tree-row .db-dot { margin: 0 2px; }
+/* The name keeps its width; the grey detail (type, host) shrinks first. */
+.db-tree-label { flex: 0 0 auto; max-width: 75%; overflow: hidden; text-overflow: ellipsis; }
+.db-tree-detail { flex: 0 100 auto; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--fg-faint); font-size: 11px; }
+.db-tree-row.is-leaf .db-tree-label { color: var(--fg); }
+.db-tree-error { color: var(--danger); }
+.db-tree-error-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.db-tree-message { padding: 12px 14px; color: var(--fg-muted); line-height: 1.5; }
+
+/* --- Console ---------------------------------------------------------------------- */
+.db-console { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: var(--font-size-ui); }
+.db-prodbar { flex: none; padding: 2px 10px; background: var(--danger); color: var(--accent-fg); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-align: center; }
+.db-toolbar { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 3px 8px; flex: none; flex-wrap: wrap; background: var(--bg-alt); border-bottom: 1px solid var(--border); }
+.db-pick { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; }
+.db-pick-text { overflow: hidden; text-overflow: ellipsis; }
+.db-switch.is-on { background: var(--active); border-color: var(--accent); }
+.db-state { min-width: 80px; text-align: right; }
+.db-editor { flex: 1 1 0; min-height: 80px; position: relative; overflow: hidden; }
+.db-editor .cm-editor { height: 100%; background: var(--bg); color: var(--fg); font-family: var(--editor-font-family, var(--font-mono)); font-size: var(--editor-font-size); line-height: var(--editor-line-height); }
+.db-editor .cm-editor.cm-focused { outline: none; }
+.db-editor .cm-scroller { font-family: inherit; line-height: inherit; }
+.db-editor .cm-gutters { background: var(--bg); color: var(--fg-faint); border: 0; }
+.db-editor .cm-content { caret-color: var(--fg); padding: 4px 0; }
+.db-editor .cm-cursor { border-left-color: var(--fg); }
+.db-editor .cm-selectionBackground, .db-editor .cm-focused .cm-selectionBackground, .db-editor .cm-content ::selection { background: var(--selection); }
+.db-editor .cm-activeLine { background: var(--hover); }
+.db-editor .cm-activeLineGutter { background: var(--hover); color: var(--fg); }
+.db-editor .cm-placeholder { color: var(--fg-faint); }
+.db-editor .cm-matchingBracket { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.db-editor .cm-selectionMatch { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.db-editor .cm-tooltip, .db-editor .cm-panels { background: var(--bg-elevated); color: var(--fg); border: 1px solid var(--border); font-family: var(--font-ui); }
+.db-editor .cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--active); color: var(--fg); }
+.db-editor .cm-panels { border-width: 0 0 1px; }
+.db-editor .cm-panels input, .db-editor .cm-panels button { font: inherit; }
+.db-resizer { flex: none; height: 5px; margin: -2px 0; position: relative; z-index: 2; cursor: row-resize; background: transparent; border-top: 1px solid var(--border); touch-action: none; }
+.db-resizer:hover { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+.db-results { flex: none; min-height: 60px; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+
+/* --- Results pane ----------------------------------------------------------------- */
+.db-rp { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: var(--font-size-ui); }
+.db-panel { height: 100%; }
+.db-rp-head { display: flex; align-items: stretch; flex: none; height: 28px; background: var(--bg-alt); border-bottom: 1px solid var(--border); padding-right: 10px; }
+.db-rp-tabs { display: flex; align-items: stretch; overflow-x: auto; min-width: 0; }
+.db-rp-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.db-rp-tab:hover { color: var(--fg); background: var(--hover); }
+.db-rp-tab.is-active { color: var(--fg); border-bottom-color: var(--accent); }
+.db-rp-count { color: var(--fg-faint); font-size: 11px; }
+.db-rp-dot { width: 7px; height: 7px; border-radius: 50%; background: transparent; }
+.db-rp-dot.is-error { background: var(--danger); }
+.db-rp-dot.is-old-error { background: var(--fg-faint); }
+.db-rp-note { align-self: center; color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
+.db-rp-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.db-rp-grid { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.db-rp-empty { padding: 14px; color: var(--fg-muted); }
+.db-msgs { flex: 1; min-height: 0; overflow: auto; outline: none; user-select: text; -webkit-user-select: text; font-family: var(--font-mono); font-size: 12px; }
+.db-msg { display: grid; grid-template-columns: 70px minmax(120px, 2fr) minmax(120px, 3fr) 80px; gap: 10px; align-items: baseline; padding: 3px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.db-msg-time { color: var(--fg-faint); }
+.db-msg-sql { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); }
+.db-msg-text { white-space: pre-wrap; word-break: break-word; }
+.db-msg.is-error { color: var(--danger); }
+.db-msg.is-error .db-msg-sql { color: var(--danger); }
+.db-msg.is-warn .db-msg-text { color: var(--warn); }
+
+/* --- Grid ----------------------------------------------------------------------------- */
+.db-grid { position: relative; display: flex; flex-direction: column; flex: 1; width: 100%; min-height: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 13px; }
+.db-grid.is-resizing, .db-grid.is-resizing * { cursor: col-resize !important; user-select: none; }
+.db-grid-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; outline: none; user-select: none; -webkit-user-select: none; }
+.db-grid-sizer { position: relative; }
+.db-grid-header { position: sticky; top: 0; z-index: 3; box-sizing: border-box; background: var(--bg-alt); border-bottom: 1px solid var(--border); }
+.db-grid-body { position: absolute; left: 0; }
+.db-row { position: absolute; left: 0; }
+.db-row.is-odd { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.db-row.is-rowsel { background: var(--hover); }
+.db-cell, .db-hcell { position: absolute; top: 0; height: 100%; box-sizing: border-box; padding: 0 8px; border-right: 1px solid var(--border); }
+.db-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.db-cell.db-num, .db-hcell.db-num { text-align: right; font-variant-numeric: tabular-nums; }
+.db-hcell.db-num { flex-direction: row-reverse; }
+.db-cell.db-null { color: var(--fg-faint); font-style: italic; }
+.db-cell.is-selected { background: var(--active); outline: 2px solid var(--accent); outline-offset: -2px; }
+.db-rn, .db-corner { position: sticky; left: 0; z-index: 2; display: block; box-sizing: border-box; height: 100%; padding: 0 6px; text-align: right; color: var(--fg-faint); background: var(--bg-alt); border-right: 1px solid var(--border); border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); font-variant-numeric: tabular-nums; cursor: default; }
+.db-corner { border-bottom: 0; }
+.db-hcell { display: flex; align-items: center; gap: 4px; font-weight: 600; cursor: pointer; }
+.db-hcell:hover { background: var(--hover); }
+.db-hlabel { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.db-sort { flex: none; font-size: 10px; color: var(--accent); }
+.db-grip { position: absolute; top: 0; right: -4px; z-index: 1; width: 8px; height: 100%; cursor: col-resize; }
+.db-grip:hover { background: color-mix(in srgb, var(--accent) 50%, transparent); }
+.db-grid-empty { display: flex; flex: 1; align-items: center; justify-content: center; color: var(--fg-muted); }
+.db-grid-foot { display: flex; gap: 14px; align-items: center; flex: none; height: 22px; padding: 0 10px; border-top: 1px solid var(--border); background: var(--bg-alt); color: var(--fg-muted); font-size: 12px; }
+
+/* --- Value viewer ---------------------------------------------------------------------- */
+.db-viewer { box-sizing: border-box; display: flex; flex-direction: column; width: min(760px, 94vw); height: min(520px, 70vh); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); color: var(--fg); box-shadow: var(--shadow); overflow: hidden; }
+.db-viewer-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.db-viewer-title { font-weight: 600; }
+.db-viewer-note { color: var(--fg-muted); font-size: 12px; }
+.db-viewer-text { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; outline: none; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; user-select: text; -webkit-user-select: text; }
+.db-grid .db-modal-backdrop { position: absolute; }
+
+/* --- Connection form ---------------------------------------------------------------------- */
+.db-form { width: 100%; height: 100%; overflow: auto; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: var(--font-size-ui); }
+.db-form-inner { box-sizing: border-box; max-width: 680px; margin: 0 auto; padding: 20px 24px 40px; }
+.db-form-title { margin: 0 0 14px; font-size: 18px; font-weight: 600; }
+.db-form-section { margin: 22px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); }
+.db-form-group { display: flex; flex-direction: column; gap: 10px; }
+.db-field { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px; align-items: start; }
+.db-field-label { padding-top: 5px; color: var(--fg-muted); }
+.db-field-error { min-height: 0; color: var(--danger); font-size: 12px; }
+.db-field-error:empty { display: none; }
+.db-check { display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; cursor: pointer; }
+.db-hint { margin-top: 4px; color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
+.db-inline { display: flex; align-items: center; gap: 8px; }
+.db-inline .db-input { flex: 1; }
+.db-color-row { display: flex; align-items: center; gap: 6px; padding-top: 3px; }
+.db-swatch { width: 20px; height: 20px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; color: var(--fg-muted); line-height: 1; font-size: 12px; background: var(--bg-alt); }
+.db-swatch.is-on { border-color: var(--fg); }
+.db-color-input { width: 28px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: none; cursor: pointer; }
+.db-form-buttons { display: flex; align-items: center; gap: 8px; margin-top: 24px; }
+.db-test-result { margin-top: 12px; white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
+.db-test-result.is-ok { color: var(--ok); }
+.db-test-result.is-error { color: var(--danger); }
+
+/* --- DDL tab -------------------------------------------------------------------------------- */
+.db-ddl { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: var(--font-size-ui); }
+.db-ddl-title { font-weight: 600; }
+.db-ddl-body { flex: 1; min-height: 0; overflow: hidden; }
+.db-ddl-body .cm-editor { height: 100%; background: var(--bg); color: var(--fg); font-family: var(--editor-font-family, var(--font-mono)); font-size: var(--editor-font-size); line-height: var(--editor-line-height); }
+.db-ddl-body .cm-editor.cm-focused { outline: none; }
+.db-ddl-body .cm-gutters { background: var(--bg); color: var(--fg-faint); border: 0; }
+.db-ddl-body .cm-selectionBackground, .db-ddl-body .cm-focused .cm-selectionBackground, .db-ddl-body .cm-content ::selection { background: var(--selection); }
+.db-ddl-error { padding: 16px; color: var(--danger); white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
+
+/* `display: flex` above would beat the `hidden` attribute. */
+.db-rp-grid[hidden],
+.db-msgs[hidden] {
+  display: none;
+}

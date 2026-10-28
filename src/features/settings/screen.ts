@@ -5,7 +5,7 @@ import type { AppContext, Disposable, Settings, TabContent } from '../../core/ty
 import {
   jsonControl,
   listControl,
-  lspTableControl,
+  dbConnectionsControl, lspTableControl,
   numberControl,
   selectControl,
   switchControl,
@@ -86,6 +86,8 @@ export function createSettingsScreen(ctx: AppContext, host: HTMLElement): TabCon
         return listControl(def, commit);
       case 'lspServers':
         return lspTableControl(openJson);
+      case 'dbConnections':
+        return dbConnectionsControl(() => void ctx.commands.execute('db.showView'));
     }
   }
 
@@ -98,7 +100,7 @@ export function createSettingsScreen(ctx: AppContext, host: HTMLElement): TabCon
       'aria-label': `Reset ${def.title} to default`,
       onclick: () => void save(def, DEFAULT_SETTINGS[def.key]),
     }, '↺');
-    const wide = def.type === 'stringList' || def.type === 'lspServers' || readOnly;
+    const wide = def.type === 'stringList' || def.type === 'lspServers' || def.type === 'dbConnections' || readOnly;
     const info = h(
       'div',
       { class: 'settings-row-info' },

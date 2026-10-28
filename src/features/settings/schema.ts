@@ -11,6 +11,7 @@ export type SectionId =
   | 'git'
   | 'lsp'
   | 'search'
+  | 'database'
   | 'other';
 
 export interface SectionDef {
@@ -28,6 +29,7 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: 'git', title: 'Git' },
   { id: 'lsp', title: 'Language Servers' },
   { id: 'search', title: 'Search' },
+  { id: 'database', title: 'Database' },
 ];
 
 export const OTHER_SECTION: SectionDef = { id: 'other', title: 'Other' };
@@ -37,7 +39,7 @@ export interface EnumOption {
   label: string;
 }
 
-export type SettingType = 'boolean' | 'enum' | 'number' | 'text' | 'stringList' | 'lspServers';
+export type SettingType = 'boolean' | 'enum' | 'number' | 'text' | 'stringList' | 'lspServers' | 'dbConnections';
 
 export interface SettingDef {
   key: keyof Settings;
@@ -339,6 +341,45 @@ export const SETTING_DEFS: readonly SettingDef[] = [
     max: 1000000,
     step: 100,
     integer: true,
+  },
+
+  // Database
+  {
+    key: 'db.connections',
+    title: 'Connections',
+    description: 'MySQL connections. Passwords are not stored here. Add and change connections in the Database view.',
+    section: 'database',
+    type: 'dbConnections',
+  },
+  {
+    key: 'db.maxRows',
+    title: 'Maximum Rows',
+    description: 'A SQL console fetches at most this many rows for each result. A note shows when a result was cut.',
+    section: 'database',
+    type: 'number',
+    min: 1,
+    max: 200000,
+    step: 100,
+    integer: true,
+  },
+  {
+    key: 'db.confirmWrites',
+    title: 'Confirm Writes',
+    description: 'Ask before a statement that changes data or the schema runs. UPDATE and DELETE without WHERE always ask.',
+    section: 'database',
+    type: 'enum',
+    options: [
+      { value: 'production', label: 'On production connections (default)' },
+      { value: 'always', label: 'Always' },
+      { value: 'never', label: 'Never' },
+    ],
+  },
+  {
+    key: 'db.showSystemSchemas',
+    title: 'Show System Schemas',
+    description: 'Show mysql, sys, information_schema and performance_schema in the Database view.',
+    section: 'database',
+    type: 'boolean',
   },
 ];
 

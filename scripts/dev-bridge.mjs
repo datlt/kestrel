@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -1863,6 +1864,76 @@ async function serveFile(req, res, url) {
   fs.createReadStream(file).pipe(res);
 }
 
+// --- db_* --------------------------------------------------------------------
+
+// The database commands run in real Rust code. `crates/kestrel-db/examples/dev_http.rs`
+// is a small HTTP server (127.0.0.1:1435) with the same DbManager as the app.
+// Here we only pass each `db_*` call on to it. Start it with:
+//   cargo run -p kestrel-db --example dev_http
+const DB_HTTP_HOST = '127.0.0.1';
+const DB_HTTP_PORT = Number(process.env.KESTREL_DB_DEV_PORT || 1435);
+const DB_START_HINT = 'start: cargo run -p kestrel-db --example dev_http';
+const DB_COMMANDS = [
+  'db_test',
+  'db_connect',
+  'db_disconnect',
+  'db_execute',
+  'db_cancel',
+  'db_set_autocommit',
+  'db_commit',
+  'db_rollback',
+  'db_use',
+  'db_databases',
+  'db_objects',
+  'db_columns',
+  'db_indexes',
+  'db_ddl',
+  'db_completion_schema',
+  'db_password_set',
+  'db_password_delete',
+  'db_password_exists',
+];
+
+/** Sends one command to the dev_http server. No timeout: a query can run for a long time. */
+function forwardDb(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(args ?? {}), 'utf8');
+    const req = http.request(
+      {
+        host: DB_HTTP_HOST,
+        port: DB_HTTP_PORT,
+        path: `/invoke/${cmd}`,
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': body.length },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (d) => chunks.push(d));
+        res.on('error', (e) => reject(new KError('db_connect', `dev_http: ${e.message}`)));
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            return reject(new KError('internal', `dev_http sent an answer that is not JSON (status ${res.statusCode})`));
+          }
+          if (res.statusCode === 200) return resolve(json);
+          reject(new KError(String(json?.code ?? 'internal'), String(json?.message ?? `dev_http status ${res.statusCode}`)));
+        });
+      },
+    );
+    req.on('error', (e) => {
+      if (e?.code === 'ECONNREFUSED' || e?.code === 'ECONNRESET' || e?.code === 'EHOSTUNREACH') {
+        return reject(new KError('db_connect', DB_START_HINT));
+      }
+      reject(new KError('db_connect', `dev_http: ${e?.message ?? e}`));
+    });
+    req.end(body);
+  });
+}
+
+const dbCommands = Object.fromEntries(DB_COMMANDS.map((cmd) => [cmd, (args) => forwardDb(cmd, args)]));
+
 // --- Dispatch ----------------------------------------------------------------
 
 const commands = {
@@ -1873,6 +1944,7 @@ const commands = {
   ...gitCommands,
   ...lspCommands,
   ...previewCommands,
+  ...dbCommands,
 };
 
 const CHANNEL_PREFIX = '__CHANNEL__:';

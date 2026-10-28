@@ -9,11 +9,13 @@
 //! | `git_`                | `git.rs`      |
 //! | `lsp_`                | `lsp.rs`      |
 //! | `md_`, `preview_`     | `preview.rs`  |
+//! | `db_`                 | `db.rs`       |
 //!
 //! Every feature module must export: `handler()`, `setup()`,
 //! `on_window_destroyed()` and `on_exit()`.
 
 pub mod app;
+pub mod db;
 pub mod fs;
 pub mod git;
 pub mod lsp;
@@ -33,6 +35,7 @@ pub struct Handlers {
     git: Handler,
     lsp: Handler,
     preview: Handler,
+    db: Handler,
 }
 
 impl Handlers {
@@ -44,6 +47,7 @@ impl Handlers {
             git: git::handler(),
             lsp: lsp::handler(),
             preview: preview::handler(),
+            db: db::handler(),
         }
     }
 
@@ -57,6 +61,7 @@ impl Handlers {
             "git" => &self.git,
             "lsp" => &self.lsp,
             "md" | "preview" => &self.preview,
+            "db" => &self.db,
             _ => {
                 let msg = format!("unknown command: {name}");
                 invoke.resolver.reject(msg);
@@ -74,6 +79,7 @@ pub fn setup(app: &mut App) -> SetupResult {
     git::setup(app)?;
     lsp::setup(app)?;
     preview::setup(app)?;
+    db::setup(app)?;
     Ok(())
 }
 
@@ -83,6 +89,7 @@ pub fn on_window_destroyed(app: &AppHandle, label: &str) {
     git::on_window_destroyed(app, label);
     lsp::on_window_destroyed(app, label);
     preview::on_window_destroyed(app, label);
+    db::on_window_destroyed(app, label);
 }
 
 pub fn on_exit(app: &AppHandle) {
@@ -91,4 +98,5 @@ pub fn on_exit(app: &AppHandle) {
     search::on_exit(app);
     git::on_exit(app);
     preview::on_exit(app);
+    db::on_exit(app);
 }

@@ -585,3 +585,82 @@ Settings changed in round 2 (core/settings.ts): `files.autoSave` default
 `afterDelay`; `preview.htmlMode` default `preview`; `preview.htmlScripts`
 default `true`; new `explorer.compactFolders` (true) and `preview.csvMode`
 (`preview`).
+
+## 9. Database feature (MySQL)
+
+Goal: look at and change data in remote MySQL databases from the editor:
+run queries, see results, control transactions, browse the schema, read DDL.
+It must be safe for production databases.
+
+### 9.1 Contract and ownership
+
+`src/ipc/db.ts` is the contract (integrator). Error codes: `db_error`,
+`db_connect`, `db_busy`, `db_lost`, `cancelled`.
+
+| Area | Owner | Files |
+|------|-------|-------|
+| Rust sessions, MySQL client, SSH tunnel, keychain | db-backend | `crates/kestrel-db/**`, `src-tauri/src/cmd/db.rs`, the `db_*` part of `scripts/dev-bridge.mjs` |
+| UI: Database view, connection form, SQL console, result grid, DDL tab | db-frontend | `src/features/db/**`, the DB section of `src/features/settings/schema.ts` |
+| Contract, settings keys, wiring | integrator | `src/ipc/db.ts`, `src/core/**`, `src/window/workbench.ts` |
+
+Test server: `scripts/dev-mysql.sh start` runs MySQL 8 in Docker on
+127.0.0.1:13306 with the sample data of `scripts/dev-mysql/seed.sql`
+(databases `kestrel_demo` and `kestrel_logs`; the user and the test
+password are in the script).
+
+### 9.2 Rust (db-backend)
+
+- `mysql_async` (tokio; rustls with the `ring` provider, so no cmake). Text
+  protocol for statements. All logic in `kestrel-db` with an async
+  `DbManager`; `cmd/db.rs` is a thin wrapper, keyed by window label.
+- Values: text as sent by the server; binary columns as hex preview (see
+  `DbValue`). Column type names from the column metadata (+ `UNSIGNED`).
+- Big results: stop at `maxRows`, mark `truncated`, `KILL QUERY` from a side
+  connection, drain, keep the session usable.
+- Transactions: track `autocommit` and `inTransaction` from the server status
+  flags of each OK/EOF packet.
+- SSH tunnel: system `ssh` with `-N -L`, `BatchMode=yes`,
+  `ExitOnForwardFailure=yes`, `ServerAliveInterval`; wait until the local port
+  accepts; one tunnel per (window, connection) shared by its sessions
+  (ref-counted); kill the process group on close. ssh stderr goes into the
+  `db_connect` error.
+- Passwords: `keyring` crate (macOS Keychain, Windows Credential Manager,
+  Linux Secret Service), service `dev.kestrel.editor.db`.
+- `crates/kestrel-db/examples/dev_http.rs`: a dev-only HTTP server
+  (127.0.0.1:1435) that exposes the same `DbManager` as `POST /invoke/<cmd>`
+  JSON, so the browser dev bridge can forward `db_*` commands to real Rust
+  code.
+
+### 9.3 Frontend (db-frontend)
+
+- Sidebar view `database` (order 40): connections (color dot, production
+  badge, read-only badge) → databases → Tables / Views / Procedures /
+  Functions / Triggers → table → columns (type, key, nullable) and indexes.
+  The tree uses its own "meta" session per connection. Context menu: New SQL
+  Console, Select Top 100, Show DDL, Copy Name, Refresh, Edit / Duplicate /
+  Delete Connection.
+- Connection form tab (`db-connection`): all fields of `DbConnectionConfig`,
+  password with "save in keychain", Test button. Stored with
+  `ctx.settings.update({ 'db.connections': ... })`.
+- SQL console tab (`sql-console`): one session per tab (lazy connect on first
+  run; restored tabs reconnect on demand). Toolbar: connection and database
+  pickers, Run (Mod-Enter: selection or statement at the cursor), Run Script
+  (Mod-Shift-Enter), Cancel, Auto-commit switch, Commit, Rollback,
+  transaction badge. Editor: `@codemirror/lang-sql` MySQL dialect with schema
+  completion (`db_completion_schema`). Results below (resizable): one tab per
+  result, virtualized grid (sticky header, row numbers, NULL greyed, numbers
+  right, resizable columns, client sort, cell select and copy, copy rows as
+  TSV / JSON / INSERT, export CSV, cell viewer for long text and JSON), plus a
+  Messages tab (time, statement, rows, elapsed, errors). Console text is
+  saved with the session.
+- `.sql` files in the workspace: Mod-Enter runs the statement at the cursor
+  on the connection chosen in the status bar item `db.connection`; results
+  show in the bottom panel view `db-results`.
+- DDL tab (`db-ddl`): read-only SQL with colors and a Copy button.
+- Safety: production connections show a red bar in the console; with
+  `db.confirmWrites` they ask before statements that are not read-only.
+  UPDATE or DELETE without WHERE always asks. Closing a console with an open
+  transaction asks Commit / Rollback / Cancel. Lost connection: tell the user;
+  never re-run a statement by itself.
+- Client statement splitter for scripts: quotes, backticks, `--`, `#` and
+  `/* */` comments, `DELIMITER`. Unit tests.

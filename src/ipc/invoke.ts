@@ -15,7 +15,11 @@ export type ErrorCode =
   | 'cancelled'
   | 'invalid_input'
   | 'io'
-  | 'internal';
+  | 'internal'
+  | 'db_error'
+  | 'db_connect'
+  | 'db_busy'
+  | 'db_lost';
 
 export class IpcError extends Error {
   constructor(

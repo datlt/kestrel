@@ -1,0 +1,21 @@
+[package]
+name = "kestrel-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kestrel-common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+# Pure Rust TLS (rustls with the `ring` provider), so the build needs no cmake.
+mysql_async = { version = "0.37", default-features = false, features = ["default-rustls-ring"] }
+# macOS Keychain, Windows Credential Manager, Linux Secret Service.
+keyring = "4"
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "signal"] }

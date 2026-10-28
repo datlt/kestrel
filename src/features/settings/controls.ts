@@ -1,4 +1,5 @@
 // Input controls for the Settings screen. Each control has no shared state.
+import type { DbConnectionConfig } from '../../ipc/db';
 import { h } from '../../core/dom';
 import type { LspServerConfig } from '../../core/types';
 import { checkNumber, type SettingDef } from './schema';
@@ -245,6 +246,44 @@ export function lspTableControl(openJson: () => void): Control {
             h('td', null, id, off ? h('span', { class: 'settings-tag' }, 'disabled') : null),
             h('td', { class: 'settings-mono' }, Array.isArray(s?.command) ? s.command.join(' ') : ''),
             h('td', null, Array.isArray(s?.languages) ? s.languages.join(', ') : ''),
+          ),
+        );
+      }
+      table.append(tb);
+      body.append(table);
+    },
+  };
+}
+
+/** Read-only list of database connections, with a button that opens the Database view. */
+export function dbConnectionsControl(openView: () => void): Control {
+  const wrap = h('div', { class: 'settings-lsp' });
+  const body = h('div', { class: 'settings-table-wrap' });
+  const btn = h('button', { class: 'settings-btn', type: 'button', onclick: openView }, 'Edit in the Database view');
+  wrap.append(body, h('div', { class: 'settings-lsp-actions' }, btn));
+  return {
+    el: wrap,
+    set: (v) => {
+      const list = (Array.isArray(v) ? v : []) as DbConnectionConfig[];
+      body.replaceChildren();
+      if (list.length === 0) {
+        body.append(h('div', { class: 'settings-empty-note' }, 'No connections yet.'));
+        return;
+      }
+      const table = h('table', { class: 'settings-table' });
+      table.append(h('thead', null, h('tr', null, h('th', null, 'Name'), h('th', null, 'Server'), h('th', null, 'Options'))));
+      const tb = h('tbody');
+      for (const c of list) {
+        const tags = [c.production ? 'production' : '', c.readOnly ? 'read-only' : '', c.ssh?.host ? `ssh ${c.ssh.host}` : '']
+          .filter(Boolean)
+          .map((t) => h('span', { class: 'settings-tag' }, t));
+        tb.append(
+          h(
+            'tr',
+            null,
+            h('td', null, c.name || '(no name)'),
+            h('td', { class: 'settings-mono' }, `${c.user}@${c.host}:${c.port}${c.database ? '/' + c.database : ''}`),
+            h('td', null, ...tags),
           ),
         );
       }

@@ -27,3 +27,4 @@ kestrel-search = { workspace = true }
 kestrel-git = { workspace = true }
 kestrel-lsp = { workspace = true }
 kestrel-markdown = { workspace = true }
+kestrel-db = { workspace = true }

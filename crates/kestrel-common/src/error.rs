@@ -33,6 +33,15 @@ pub mod codes {
     pub const INVALID_INPUT: &str = "invalid_input";
     pub const IO: &str = "io";
     pub const INTERNAL: &str = "internal";
+    /// The database server returned an error. The message starts with the
+    /// MySQL error number and SQL state, for example "1146 (42S02): ...".
+    pub const DB_ERROR: &str = "db_error";
+    /// Could not connect or log in to the database (or the SSH tunnel failed).
+    pub const DB_CONNECT: &str = "db_connect";
+    /// The database session runs another statement now.
+    pub const DB_BUSY: &str = "db_busy";
+    /// The database connection was lost. The session must reconnect.
+    pub const DB_LOST: &str = "db_lost";
 }
 
 impl Error {
