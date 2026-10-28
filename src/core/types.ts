@@ -339,6 +339,13 @@ export interface ViewDescriptor {
   order: number;
   /** Called lazily the first time the view is shown. */
   create(host: HTMLElement): ViewInstance;
+  /**
+   * Panel views only: also show a button for this view in the lower part of
+   * the activity bar, so people find it without a shortcut. A click runs
+   * `command` when given (its key shows in the tooltip), else shows or hides
+   * the view.
+   */
+  activityBar?: { command?: string };
 }
 
 export interface ViewRegistry {

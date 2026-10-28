@@ -453,6 +453,7 @@ export function createTerminalView(ctx: AppContext, onCreate: (panel: TerminalPa
     location: 'panel',
     order: 5,
     icon: () => createElement(SquareTerminal),
+    activityBar: { command: 'terminal.toggle' },
     create(host) {
       const panel = new TerminalPanel(ctx, host);
       onCreate(panel);

@@ -50,7 +50,7 @@ export function createShell(ctx: AppContext): Shell {
     contextMenu: menu.contextMenu,
   };
   const tabs = createTabModel(ctx, ui);
-  const views = createViews(store);
+  const views = createViews(store, ctx.commands);
   const status = createStatusBar((command, args) => {
     ctx.commands.execute(command, ...args).catch((err) => {
       console.error(`command ${command} failed`, err);

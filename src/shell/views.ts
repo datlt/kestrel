@@ -2,7 +2,7 @@
 
 import { X } from 'lucide';
 import { h } from '../core/dom';
-import type { ViewDescriptor, ViewInstance, ViewRegistry } from '../core/types';
+import type { CommandRegistry, ViewDescriptor, ViewInstance, ViewRegistry } from '../core/types';
 import { icon } from './icons';
 import type { LayoutStore } from './layout-state';
 
@@ -14,16 +14,20 @@ interface Rec {
   button: HTMLElement | null;
   badgeEl: HTMLElement | null;
   tab: HTMLElement | null;
+  /** Button in the lower activity bar (panel views with `activityBar`). */
+  panelButton: HTMLElement | null;
 }
 
-export function createViews(store: LayoutStore) {
+export function createViews(store: LayoutStore, commands: CommandRegistry) {
   const recs = new Map<string, Rec>();
   let mounted = false;
   let shown = new Set<string>();
 
   // ---- DOM (built early, filled when views register) --------------------
   const activityTop = h('div', { class: 'shell-activity-top' });
-  const activityBottom = h('div', { class: 'shell-activity-bottom' });
+  // Buttons of panel views (for example Terminal) sit above the gear button.
+  const activityPanels = h('div', { class: 'shell-activity-panels' });
+  const activityBottom = h('div', { class: 'shell-activity-bottom' }, activityPanels);
   const activityBar = h('div', { class: 'shell-activitybar', role: 'toolbar', 'aria-orientation': 'vertical' }, activityTop, activityBottom);
 
   const sidebarTitle = h('div', { class: 'shell-sidebar-title' });
@@ -96,6 +100,40 @@ export function createViews(store: LayoutStore) {
     }
   }
 
+  function rebuildPanelButtons() {
+    activityPanels.replaceChildren();
+    for (const rec of listFor('panel')) {
+      rec.panelButton = null;
+      const opts = rec.desc.activityBar;
+      if (!opts) continue;
+      const glyph = rec.desc.icon();
+      glyph.removeAttribute('width');
+      glyph.removeAttribute('height');
+      glyph.classList.add('shell-icon');
+      const cmd = opts.command ? commands.get(opts.command) : undefined;
+      const binding = Array.isArray(cmd?.keybinding) ? cmd?.keybinding[0] : cmd?.keybinding;
+      const tip = binding ? `${rec.desc.title} (${commands.keyLabel(binding)})` : rec.desc.title;
+      const button = h('button', {
+        class: 'shell-activity-btn',
+        title: tip,
+        'aria-label': rec.desc.title,
+        onclick: () => onPanelButtonClick(rec.desc.id),
+      }, glyph);
+      rec.panelButton = button;
+      activityPanels.append(button);
+    }
+  }
+
+  function onPanelButtonClick(id: string) {
+    const command = recs.get(id)?.desc.activityBar?.command;
+    if (command && commands.get(command)) {
+      void commands.execute(command);
+      return;
+    }
+    if (shown.has(id)) store.patch({ panelVisible: false });
+    else api.show(id, { focus: true });
+  }
+
   function rebuildPanelTabs() {
     panelTabs.replaceChildren();
     for (const rec of listFor('panel')) {
@@ -139,6 +177,8 @@ export function createViews(store: LayoutStore) {
         rec.button?.classList.toggle('shell-active', id === sid && store.state.sidebarVisible);
         rec.button?.setAttribute('aria-pressed', String(id === sid && store.state.sidebarVisible));
         rec.tab?.classList.toggle('shell-active', id === pid);
+        rec.panelButton?.classList.toggle('shell-active', id === pid && store.state.panelVisible);
+        rec.panelButton?.setAttribute('aria-pressed', String(id === pid && store.state.panelVisible));
         rec.tab?.setAttribute('aria-selected', String(id === pid));
         if (rec.host && !isActive) rec.host.hidden = true;
       }
@@ -159,11 +199,12 @@ export function createViews(store: LayoutStore) {
   const api: ViewRegistry = {
     register(desc) {
       if (recs.has(desc.id)) console.warn(`view ${desc.id} registered twice; the new one wins`);
-      const rec: Rec = { desc, host: null, instance: null, badge: null, button: null, badgeEl: null, tab: null };
+      const rec: Rec = { desc, host: null, instance: null, badge: null, button: null, badgeEl: null, tab: null, panelButton: null };
       recs.set(desc.id, rec);
       if (mounted) {
         rebuildActivity();
         rebuildPanelTabs();
+        rebuildPanelButtons();
       }
       render();
       return {
@@ -177,6 +218,7 @@ export function createViews(store: LayoutStore) {
           if (mounted) {
             rebuildActivity();
             rebuildPanelTabs();
+            rebuildPanelButtons();
           }
           render();
         },
@@ -231,6 +273,7 @@ export function createViews(store: LayoutStore) {
       mounted = true;
       rebuildActivity();
       rebuildPanelTabs();
+      rebuildPanelButtons();
       shown = new Set();
       render();
     },
