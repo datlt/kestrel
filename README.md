@@ -34,11 +34,21 @@ and its goal is to replace IntelliJ IDEA for it:
 
 ## Why the name
 
-A kestrel is a small falcon. It weighs about 200 grams. It can hang still in
-the wind above a field, watch the ground for a long time, and then drop on its
-target in a second. The editor tries to work the same way: light, able to hover
-over a big codebase so you see the whole picture, and quick when you go down to
-the exact line.
+<p align="center">
+  <img src="docs/images/kestrel.jpg" width="640" alt="A common kestrel in the air, about to drop on its prey">
+  <br>
+  <sub>
+    Common kestrel (<i>Falco tinnunculus</i>). Photo by Andy Morffew,
+    <a href="https://commons.wikimedia.org/wiki/File:A_kestrel_prepares_to_swoop_down_on_its_next_meal_(54297184736).jpg">Wikimedia Commons</a>,
+    <a href="https://creativecommons.org/licenses/by/2.0/">CC BY 2.0</a>.
+  </sub>
+</p>
+
+A [kestrel](https://en.wikipedia.org/wiki/Common_kestrel) is a small falcon.
+It weighs about 200 grams. It can hang still in the wind above a field, watch
+the ground for a long time, and then drop on its target in a second. The editor
+tries to work the same way: light, able to hover over a big codebase so you see
+the whole picture, and quick when you go down to the exact line.
 
 ## Features
 
