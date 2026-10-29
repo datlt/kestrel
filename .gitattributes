@@ -1,0 +1,2 @@
+# This test file must keep its CRLF line endings.
+crates/kestrel-notes/tests/fixtures/vault/Crlf.md -text
