@@ -27,6 +27,8 @@ export const DEFAULT_SETTINGS: Settings = {
   'preview.htmlMode': 'preview',
   'preview.htmlScripts': true,
   'preview.csvMode': 'preview',
+  'preview.markdownWidth': 900,
+  'preview.markdownCodeWrap': false,
   'git.enabled': true,
   'git.gutter': true,
   'lsp.enabled': true,

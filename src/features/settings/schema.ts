@@ -301,6 +301,27 @@ export const SETTING_DEFS: readonly SettingDef[] = [
     type: 'enum',
     options: viewModes,
   },
+  {
+    key: 'preview.markdownWidth',
+    title: 'Markdown Text Width',
+    description:
+      'Width of the text in the Markdown preview. 0 means the full width of the view. You can also drag the edge of the text in the preview. Double-click the edge for the default.',
+    section: 'preview',
+    type: 'number',
+    min: 0,
+    max: 10000,
+    step: 10,
+    integer: true,
+    unit: 'px',
+  },
+  {
+    key: 'preview.markdownCodeWrap',
+    title: 'Wrap Lines in Code Blocks',
+    description:
+      'Long lines in code blocks of the Markdown preview go on to the next line. When off, the block scrolls sideways.',
+    section: 'preview',
+    type: 'boolean',
+  },
 
   // Git
   {

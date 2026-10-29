@@ -180,6 +180,10 @@ export interface Settings {
   'preview.htmlScripts': boolean;
   /** CSV and TSV files: `preview` shows a table, `code` shows the raw text. */
   'preview.csvMode': ViewMode;
+  /** Width of the text column in the Markdown preview, in CSS px. 0 means the full width of the view. */
+  'preview.markdownWidth': number;
+  /** Long lines in code blocks of the Markdown preview go on to the next line. */
+  'preview.markdownCodeWrap': boolean;
   'git.enabled': boolean;
   'git.gutter': boolean;
   'lsp.enabled': boolean;

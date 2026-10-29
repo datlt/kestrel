@@ -502,7 +502,11 @@ section 4.1.
   folder of the file through `preview://`, GitHub-like styles that follow the
   theme, code blocks highlighted with `ctx.editors.highlightToHtml`, update
   in place (keep the scroll position), two-way scroll sync with
-  `data-sourcepos`, links: `http(s)` opens in the system browser
+  `data-sourcepos`, a copy button and a wrap button on each code block (they
+  sit in a wrapper outside the scrolling `pre`), the text width from
+  `preview.markdownWidth` (0 is full width; drag handles at both edges of the
+  text change it, double-click sets the default), line wrap in code blocks from
+  `preview.markdownCodeWrap`, links: `http(s)` opens in the system browser
   (`@tauri-apps/plugin-opener`), relative `.md` opens in Kestrel, `#anchor`
   scrolls. HTML `PreviewProvider` (`.html`, `.htm`): live render of the
   editor text through `srcdoc` plus `<base>`; scripts off unless

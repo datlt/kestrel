@@ -5,12 +5,14 @@
 
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { h } from '../../core/dom';
+import { DEFAULT_SETTINGS } from '../../core/settings';
 import type { AppContext, FileEditor, PreviewInstance } from '../../core/types';
 import { dirname, escapeHtml, extname, rafThrottle } from '../../core/util';
 import { fsStat } from '../../ipc/fs';
 import { mdRender, pathFromPreviewUrl, previewDirUrl } from '../../ipc/preview';
 import { animate, forwardKeys, nextZoom, themeCss, wheelZoomStepper } from './frame';
 import { MARKDOWN_CSS } from './markdown-css';
+import { codeText, dragWidth, normalizeWidth, pageMaxWidth, PAGE_PADDING, widthLabel } from './markdown-layout';
 import { NoteLinks } from './wikilinks';
 import './preview.css';
 
@@ -21,6 +23,14 @@ const BLOCKS = 'p,h1,h2,h3,h4,h5,h6,pre,li,blockquote,table,tr,hr,dl,details,div
 const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 const MAX_HIGHLIGHT_CHARS = 100_000;
 const CACHE_LIMIT = 300;
+
+const RESIZE_TITLE = 'Drag to change the text width. Double-click: default width.';
+const COPIED_MS = 1200;
+// Small 16x16 line icons. They have no text, so copying page text stays clean.
+const svg = (d: string) => `<svg viewBox="0 0 16 16" aria-hidden="true">${d}</svg>`;
+const ICON_COPY = svg('<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>');
+const ICON_CHECK = svg('<path d="M3 8.5l3.2 3.2L13 4.8"/>');
+const ICON_WRAP = svg('<path d="M2 4h12M2 8h9a2.5 2.5 0 0 1 0 5H8"/><path d="M9.5 11.5L8 13l1.5 1.5"/>');
 
 interface Block {
   el: HTMLElement;
@@ -38,7 +48,9 @@ function buildDoc(base: string | null, ctx: AppContext): string {
     `<!doctype html><html><head><meta charset="utf-8">${baseTag}` +
     `<style id="kv">${themeCss()}</style><style>${MARKDOWN_CSS}</style>` +
     `<style id="hl">${ctx.editors.highlightCss()}</style></head>` +
-    `<body><article id="md" class="markdown-body"></article></body></html>`
+    `<body><div id="page"><div class="md-resize md-resize-l" title="${RESIZE_TITLE}"></div>` +
+    `<article id="md" class="markdown-body"></article>` +
+    `<div class="md-resize md-resize-r" title="${RESIZE_TITLE}"></div></div></body></html>`
   );
 }
 
@@ -63,6 +75,8 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
   let savedScroll = 0;
   let zoomLevel = 1;
   let stopZoom: (() => void) | null = null;
+  let page: HTMLElement | null = null;
+  let resizing = false;
 
   try {
     const z = ctx.workspace.globalState.get<number>('preview.zoom');
@@ -136,8 +150,20 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     win.scrollTo(0, win.scrollY + r.top + frac * r.height);
   }
 
+  /**
+   * Remembers the source line at the top of the preview. The returned function
+   * scrolls back to that line after the layout changes (text width, code wrap).
+   * At the very top of the page there is nothing to keep.
+   */
+  function keepPlace(): () => void {
+    const win = iframe.contentWindow;
+    if (!win || win.scrollY <= 0) return () => {};
+    const line = topLine();
+    return () => scrollToLine(line);
+  }
+
   const sendScroll = rafThrottle(() => {
-    if (!hasIntent()) return;
+    if (resizing || !hasIntent()) return;
     const line = topLine();
     lastUserScroll = performance.now();
     if (line === lastSentLine) return;
@@ -161,6 +187,12 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
   }
 
   function onClick(e: MouseEvent): void {
+    const tool = (e.target as Element | null)?.closest?.<HTMLButtonElement>('button[data-md-action]');
+    if (tool) {
+      e.preventDefault();
+      onTool(tool);
+      return;
+    }
     const a = (e.target as Element | null)?.closest?.('a');
     if (!a) return;
     const href = a.getAttribute('href');
@@ -178,6 +210,131 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
       if (!path) return;
       void openPathLink(path, href, background);
     }
+  }
+
+  // --- Code block tools --------------------------------------------------
+  function onTool(btn: HTMLButtonElement): void {
+    if (btn.dataset.mdAction === 'wrap') {
+      ctx.settings
+        .update({ 'preview.markdownCodeWrap': !ctx.settings.get('preview.markdownCodeWrap') })
+        .catch((err) => ctx.ui.notify(`Cannot save the setting: ${err}`, { kind: 'error' }));
+      return;
+    }
+    const pre = btn.closest('.md-code')?.querySelector('pre');
+    if (!pre) return;
+    const text = codeText((pre.querySelector('code') ?? pre).textContent ?? '');
+    navigator.clipboard.writeText(text).then(
+      () => {
+        btn.innerHTML = ICON_CHECK;
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.innerHTML = ICON_COPY;
+          btn.classList.remove('copied');
+        }, COPIED_MS);
+      },
+      () => ctx.ui.notify('Cannot copy to the clipboard.', { kind: 'warn' }),
+    );
+  }
+
+  function toolButton(d: Document, action: string, title: string, icon: string): HTMLButtonElement {
+    const b = d.createElement('button');
+    b.type = 'button';
+    b.dataset.mdAction = action;
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    b.innerHTML = icon;
+    return b;
+  }
+
+  function updateWrapButton(btn: Element): void {
+    const on = ctx.settings.get('preview.markdownCodeWrap');
+    const title = on ? 'Do not wrap long lines' : 'Wrap long lines';
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('title', title);
+    btn.setAttribute('aria-label', title);
+  }
+
+  /** Put each `pre` in a wrapper with the copy and wrap buttons. The `pre` itself stays as it is. */
+  function addCodeTools(): void {
+    if (!article || !doc) return;
+    for (const pre of article.querySelectorAll('pre')) {
+      const wrap = doc.createElement('div');
+      wrap.className = 'md-code';
+      const tools = doc.createElement('div');
+      tools.className = 'md-code-tools';
+      const wrapBtn = toolButton(doc, 'wrap', 'Wrap long lines', ICON_WRAP);
+      updateWrapButton(wrapBtn);
+      tools.append(wrapBtn, toolButton(doc, 'copy', 'Copy code', ICON_COPY));
+      pre.replaceWith(wrap);
+      wrap.append(pre, tools);
+    }
+  }
+
+  // --- Width and wrap ----------------------------------------------------
+  function applyWidth(width: number): void {
+    if (page) page.style.maxWidth = pageMaxWidth(width);
+  }
+
+  function applyWrap(on: boolean): void {
+    doc?.body.classList.toggle('code-wrap', on);
+    for (const b of article?.querySelectorAll('button[data-md-action="wrap"]') ?? []) updateWrapButton(b);
+  }
+
+  function saveWidth(width: number): void {
+    ctx.settings
+      .update({ 'preview.markdownWidth': width })
+      .catch((err) => ctx.ui.notify(`Cannot save the text width: ${err}`, { kind: 'error' }));
+  }
+
+  function startResize(e: PointerEvent, handle: HTMLElement): void {
+    if (e.button !== 0 || !doc || !page || resizing) return;
+    const d = doc;
+    const el = page;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const side = handle.classList.contains('md-resize-l') ? 'l' : 'r';
+    const startX = e.clientX;
+    const startWidth = el.offsetWidth - PAGE_PADDING;
+    const restore = keepPlace();
+    let width = normalizeWidth(ctx.settings.get('preview.markdownWidth'));
+    const label = d.createElement('div');
+    label.className = 'md-width-label';
+    resizing = true;
+    d.documentElement.classList.add('md-resizing');
+    d.body.append(label);
+    const move = (ev: PointerEvent) => {
+      width = dragWidth(startWidth, ev.clientX - startX, side, zoomLevel, d.body.clientWidth);
+      el.style.maxWidth = pageMaxWidth(width);
+      label.textContent = widthLabel(width);
+      restore();
+    };
+    const end = (ev: PointerEvent) => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      if (handle.hasPointerCapture(ev.pointerId)) handle.releasePointerCapture(ev.pointerId);
+      d.documentElement.classList.remove('md-resizing');
+      label.remove();
+      resizing = false;
+      // A click without movement keeps the width.
+      if (ev.clientX !== startX) saveWidth(width);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    label.textContent = widthLabel(width);
+  }
+
+  function onResizeDown(e: PointerEvent): void {
+    const handle = (e.target as Element | null)?.closest?.<HTMLElement>('.md-resize');
+    if (handle) startResize(e, handle);
+  }
+
+  function onResizeDblClick(e: MouseEvent): void {
+    if (!(e.target as Element | null)?.closest?.('.md-resize')) return;
+    e.preventDefault();
+    saveWidth(DEFAULT_SETTINGS['preview.markdownWidth']);
   }
 
   /** A relative link: the file when it exists, else the note index resolves it (`[x](Note)`, links by name). */
@@ -225,6 +382,7 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     const y = hasContent ? win.scrollY : savedScroll;
     article.innerHTML = html;
     hasContent = true;
+    addCodeTools();
     rebuildIndex();
     highlightBlocks(renderSeq);
     if (isFile) {
@@ -287,6 +445,9 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     const win = iframe.contentWindow;
     if (!doc || !win) return;
     article = doc.getElementById('md');
+    page = doc.getElementById('page');
+    doc.addEventListener('pointerdown', onResizeDown);
+    doc.addEventListener('dblclick', onResizeDblClick);
     forwardKeys(doc);
     doc.addEventListener('click', onClick);
     doc.addEventListener('auxclick', (e) => e.preventDefault());
@@ -327,6 +488,8 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
       setZoom(Math.min(3, Math.max(0.5, base * (e as Event & { scale: number }).scale)));
     });
     setZoom(zoomLevel);
+    applyWidth(normalizeWidth(ctx.settings.get('preview.markdownWidth')));
+    applyWrap(ctx.settings.get('preview.markdownCodeWrap'));
     if (lastHtml) {
       hasContent = false;
       apply(lastHtml);
@@ -341,6 +504,17 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     const hl = doc.getElementById('hl');
     if (kv) kv.textContent = themeCss();
     if (hl) hl.textContent = ctx.editors.highlightCss();
+  });
+
+  const settingsSub = ctx.bus.on('settings:changed', ({ settings, previous }) => {
+    // After a drag the page already has the new width, so only other previews and the Settings screen change it here.
+    const widthChanged = pageMaxWidth(normalizeWidth(settings['preview.markdownWidth'])) !== page?.style.maxWidth;
+    const wrapChanged = settings['preview.markdownCodeWrap'] !== previous['preview.markdownCodeWrap'];
+    if (!doc || (!widthChanged && !wrapChanged)) return;
+    const restore = keepPlace();
+    if (widthChanged) applyWidth(normalizeWidth(settings['preview.markdownWidth']));
+    if (wrapChanged) applyWrap(settings['preview.markdownCodeWrap']);
+    restore();
   });
 
   return {
@@ -362,6 +536,7 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
       disposed = true;
       stopZoom?.();
       sub.dispose();
+      settingsSub.dispose();
       links.dispose();
       iframe.removeEventListener('load', onLoad);
       iframe.remove();

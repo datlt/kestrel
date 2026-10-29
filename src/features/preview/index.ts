@@ -71,4 +71,12 @@ export function initPreview(ctx: AppContext): void {
     { largeFiles: true },
   );
   registerImageViewer(ctx);
+  ctx.commands.registerMany([
+    {
+      id: 'preview.toggleCodeWrap',
+      title: 'Toggle Line Wrap in Markdown Code Blocks',
+      category: 'View',
+      run: () => ctx.settings.update({ 'preview.markdownCodeWrap': !ctx.settings.get('preview.markdownCodeWrap') }),
+    },
+  ]);
 }

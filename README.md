@@ -61,7 +61,9 @@ the whole picture, and quick when you go down to the exact line.
 - **Syntax colors** for Kotlin, Java, Swift, JavaScript, TypeScript, Python,
   HTML, CSS, SQL, JSON, Markdown, XML, YAML, Rust, Go, C++, Groovy and more.
 - **Viewers.** Markdown and HTML preview (code, split or preview mode), CSV and
-  TSV as a sortable table, images. CSV and TSV files up to 256 MB keep the
+  TSV as a sortable table, images. Code blocks in the Markdown preview have
+  copy and line wrap buttons, and you can drag the edge of the text to change
+  its width. CSV and TSV files up to 256 MB keep the
   table and the column colors: the table shows the first rows at once and
   reads the rest in a worker.
 - **Graph View** of the markdown files (Mod-Alt-g) like Obsidian, and the
@@ -571,6 +573,8 @@ Main settings:
 | `files.exclude` | `.git`, `.DS_Store`, `Thumbs.db` | Hidden in the Explorer |
 | `explorer.compactFolders` | `true` | Show single-child folder chains as one row |
 | `preview.markdownMode` | `"preview"` | Start mode of Markdown files: `"code"`, `"split"` or `"preview"` |
+| `preview.markdownWidth` | `900` | Width of the text in the Markdown preview in px (0: full width). You can also drag the edge of the text. |
+| `preview.markdownCodeWrap` | `false` | Wrap long lines in code blocks of the Markdown preview |
 | `preview.htmlMode` | `"preview"` | Start mode of HTML files |
 | `preview.htmlScripts` | `true` | Run scripts in the HTML preview (in a sandbox) |
 | `preview.csvMode` | `"preview"` | Start mode of CSV and TSV files (`"code"` = raw text) |
