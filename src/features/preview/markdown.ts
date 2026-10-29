@@ -1,7 +1,18 @@
-// Markdown preview: an iframe without scripts. The frame is built once. Later
-// updates replace the content of one element, so the scroll position stays.
-// Because the frame is `sandbox="allow-same-origin"`, this code can reach its
-// document directly. Scripts inside the frame cannot run.
+// Markdown preview: an iframe that runs no scripts of the file. The frame is
+// built once. Later updates replace the content of one element, so the scroll
+// position stays. The frame has the same origin as the app (`allow-same-origin`),
+// so this code reaches its document directly and adds the event listeners.
+//
+// WebKit (the Tauri web view on macOS) does not call event listeners in a frame
+// whose sandbox has no `allow-scripts`, even listeners that this window added.
+// Chrome does call them. So the frame loads with `allow-scripts`, and these
+// rules keep the scripts of the file out:
+// - The frame document has a CSP `script-src 'none'` (no <script>, no `onerror=`,
+//   no `javascript:` links). The CSP of the app also applies to a srcdoc frame.
+// - Right after the load, the sandbox goes back to `allow-same-origin` only. The
+//   loaded document keeps its flags, but a page that the frame goes to later
+//   (a link, a refresh) gets no scripts. Then `onLoad` loads our document again.
+// - `<meta>` elements of the file are removed (a meta refresh would leave the page).
 
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { h } from '../../core/dom';
@@ -11,6 +22,8 @@ import { dirname, escapeHtml, extname, rafThrottle } from '../../core/util';
 import { fsStat } from '../../ipc/fs';
 import { mdRender, pathFromPreviewUrl, previewDirUrl } from '../../ipc/preview';
 import { animate, forwardKeys, nextZoom, themeCss, wheelZoomStepper } from './frame';
+import { PreviewFind } from './markdown-find';
+import { findKeyAction } from './markdown-find-text';
 import { MARKDOWN_CSS } from './markdown-css';
 import { codeText, dragWidth, normalizeWidth, pageMaxWidth, PAGE_PADDING, widthLabel } from './markdown-layout';
 import { NoteLinks } from './wikilinks';
@@ -24,6 +37,13 @@ const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 const MAX_HIGHLIGHT_CHARS = 100_000;
 const CACHE_LIMIT = 300;
 
+/** Nothing of the file may run, embed a plugin or a frame, or send a form. */
+const FRAME_CSP = "script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'";
+const SANDBOX_LOAD = 'allow-same-origin allow-scripts';
+const SANDBOX_AFTER_LOAD = 'allow-same-origin';
+/** More reloads than this in RELOAD_WINDOW_MS: the page keeps leaving, so stop loading it again. */
+const MAX_RELOADS = 5;
+const RELOAD_WINDOW_MS = 3000;
 const RESIZE_TITLE = 'Drag to change the text width. Double-click: default width.';
 const COPIED_MS = 1200;
 // Small 16x16 line icons. They have no text, so copying page text stays clean.
@@ -42,10 +62,12 @@ interface Block {
 // Each workbench has its own cache (no module state shared between workbenches).
 const highlightCaches = new WeakMap<AppContext, Map<string, string>>();
 
-function buildDoc(base: string | null, ctx: AppContext): string {
+/** `load` numbers each load, so setting `srcdoc` always loads the frame again. */
+function buildDoc(base: string | null, ctx: AppContext, load: number): string {
   const baseTag = base ? `<base href="${escapeHtml(base)}">` : '';
   return (
-    `<!doctype html><html><head><meta charset="utf-8">${baseTag}` +
+    `<!doctype html><html data-load="${load}"><head><meta charset="utf-8">` +
+    `<meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">${baseTag}` +
     `<style id="kv">${themeCss()}</style><style>${MARKDOWN_CSS}</style>` +
     `<style id="hl">${ctx.editors.highlightCss()}</style></head>` +
     `<body><div id="page"><div class="md-resize md-resize-l" title="${RESIZE_TITLE}"></div>` +
@@ -58,9 +80,29 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
   const isFile = !editor.path.startsWith('untitled:');
   const highlightCache = highlightCaches.get(ctx) ?? new Map<string, string>();
   highlightCaches.set(ctx, highlightCache);
-  const iframe = h('iframe', { class: 'preview-frame', sandbox: 'allow-same-origin', title: 'Markdown preview' });
-  host.append(h('div', { class: 'preview-root' }, iframe));
-  iframe.srcdoc = buildDoc(isFile ? previewDirUrl(dirname(editor.path)) : null, ctx);
+  const iframe = h('iframe', { class: 'preview-frame', sandbox: SANDBOX_AFTER_LOAD, title: 'Markdown preview' });
+  const root = h('div', { class: 'preview-root' }, iframe);
+  host.append(root);
+  const find = new PreviewFind(root, iframe);
+  const base = isFile ? previewDirUrl(dirname(editor.path)) : null;
+  // True from `loadFrame()` until its load event. Other loads are not ours.
+  let loading = false;
+  let loadCount = 0;
+  let reloads: number[] = [];
+  function loadFrame(): void {
+    loading = true;
+    iframe.setAttribute('sandbox', SANDBOX_LOAD);
+    iframe.srcdoc = buildDoc(base, ctx, ++loadCount);
+  }
+  /** True when the frame shows our srcdoc document (a page of another origin throws on `location`). */
+  function frameIsOurs(): boolean {
+    try {
+      return iframe.contentWindow?.location.href === 'about:srcdoc';
+    } catch {
+      return false;
+    }
+  }
+  loadFrame();
 
   let disposed = false;
   const links = new NoteLinks(ctx, editor.path);
@@ -292,7 +334,13 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     const d = doc;
     const el = page;
     e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
+    // With the capture, moves outside the frame still arrive. Without it (it can
+    // fail), the listeners on the document below still see moves inside the frame.
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // Keep going without the capture.
+    }
     const side = handle.classList.contains('md-resize-l') ? 'l' : 'r';
     const startX = e.clientX;
     const startWidth = el.offsetWidth - PAGE_PADDING;
@@ -310,9 +358,9 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
       restore();
     };
     const end = (ev: PointerEvent) => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', end);
-      handle.removeEventListener('pointercancel', end);
+      d.removeEventListener('pointermove', move);
+      d.removeEventListener('pointerup', end);
+      d.removeEventListener('pointercancel', end);
       if (handle.hasPointerCapture(ev.pointerId)) handle.releasePointerCapture(ev.pointerId);
       d.documentElement.classList.remove('md-resizing');
       label.remove();
@@ -320,9 +368,9 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
       // A click without movement keeps the width.
       if (ev.clientX !== startX) saveWidth(width);
     };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', end);
-    handle.addEventListener('pointercancel', end);
+    d.addEventListener('pointermove', move);
+    d.addEventListener('pointerup', end);
+    d.addEventListener('pointercancel', end);
     label.textContent = widthLabel(width);
   }
 
@@ -380,7 +428,11 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     if (!article || !doc) return;
     const win = iframe.contentWindow!;
     const y = hasContent ? win.scrollY : savedScroll;
-    article.innerHTML = html;
+    // Parse in an inert template, so a meta refresh of the file never runs.
+    const t = doc.createElement('template');
+    t.innerHTML = html;
+    for (const m of t.content.querySelectorAll('meta')) m.remove();
+    article.replaceChildren(t.content);
     hasContent = true;
     addCodeTools();
     rebuildIndex();
@@ -395,6 +447,7 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     } else {
       win.scrollTo(0, y);
     }
+    find.refresh();
   }
 
   async function render(): Promise<void> {
@@ -438,9 +491,34 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     }
   }
 
+  // --- Find --------------------------------------------------------------
+  function onFindKey(e: KeyboardEvent): void {
+    if (!find.isOpen()) return;
+    const action = findKeyAction(e, false);
+    if (!action) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (action === 'close') find.close();
+    else if (action === 'next') find.next();
+    else find.previous();
+  }
+
   // --- Frame setup (runs on every load of the srcdoc) ----------------------
   function onLoad(): void {
     if (disposed) return;
+    // Not our load: the frame went to another page, or the browser loaded the
+    // frame again after a move in the DOM (with scripts off). Load our document again.
+    if (!loading || !frameIsOurs()) {
+      const now = performance.now();
+      reloads = reloads.filter((t) => now - t < RELOAD_WINDOW_MS);
+      if (reloads.length >= MAX_RELOADS) return;
+      reloads.push(now);
+      doc = article = page = null;
+      loadFrame();
+      return;
+    }
+    loading = false;
+    iframe.setAttribute('sandbox', SANDBOX_AFTER_LOAD);
     doc = iframe.contentDocument;
     const win = iframe.contentWindow;
     if (!doc || !win) return;
@@ -448,6 +526,9 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     page = doc.getElementById('page');
     doc.addEventListener('pointerdown', onResizeDown);
     doc.addEventListener('dblclick', onResizeDblClick);
+    find.attach(doc);
+    // Before `forwardKeys`: keys of the find bar must not go to the shell.
+    doc.addEventListener('keydown', onFindKey);
     forwardKeys(doc);
     doc.addEventListener('click', onClick);
     doc.addEventListener('auxclick', (e) => e.preventDefault());
@@ -532,9 +613,13 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     zoom(step) {
       zoomTo(nextZoom(zoomLevel, step));
     },
+    find() {
+      find.open();
+    },
     dispose() {
       disposed = true;
       stopZoom?.();
+      find.dispose();
       sub.dispose();
       settingsSub.dispose();
       links.dispose();

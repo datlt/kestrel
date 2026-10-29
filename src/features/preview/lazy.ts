@@ -46,6 +46,10 @@ export function lazyPreview(ctx: AppContext, host: HTMLElement, editor: FileEdit
       if (real) real.zoom?.(step);
       else zoomSteps.push(step);
     },
+    find() {
+      // Before the real preview loads there is no text to search.
+      real?.find?.();
+    },
     dispose() {
       disposed = true;
       real?.dispose();

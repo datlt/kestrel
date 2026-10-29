@@ -497,8 +497,18 @@ section 4.1.
   in a sandbox without scripts), `data-sourcepos` attributes for scroll sync.
   The `preview://` protocol (section 5.3) with correct MIME types and HTTP
   range support for audio and video.
-- Frontend: markdown `PreviewProvider` (`.md`, `.markdown`): iframe with
-  `sandbox="allow-same-origin"` (no scripts), a `<base>` that points to the
+- Frontend: markdown `PreviewProvider` (`.md`, `.markdown`): a same-origin
+  iframe that runs no script of the file. WebKit (the macOS web view) does not
+  call event listeners in a frame whose sandbox has no `allow-scripts`, even
+  listeners of the parent window, so the frame loads with
+  `allow-same-origin allow-scripts` and a CSP `script-src 'none'; object-src
+  'none'; frame-src 'none'; form-action 'none'`. After the load the sandbox
+  goes back to `allow-same-origin`, so a page that the frame goes to later runs
+  no scripts, and the preview loads its own document again. `<meta>` elements
+  of the file are removed before the HTML goes into the page (a meta refresh
+  would leave it). Checked in a WKWebView: listeners run; `onerror`, `onload`,
+  `javascript:` links, nested frames and a meta refresh to a same-origin page
+  with a script run nothing. The frame has a `<base>` that points to the
   folder of the file through `preview://`, GitHub-like styles that follow the
   theme, code blocks highlighted with `ctx.editors.highlightToHtml`, update
   in place (keep the scroll position), two-way scroll sync with
@@ -506,7 +516,9 @@ section 4.1.
   sit in a wrapper outside the scrolling `pre`), the text width from
   `preview.markdownWidth` (0 is full width; drag handles at both edges of the
   text change it, double-click sets the default), line wrap in code blocks from
-  `preview.markdownCodeWrap`, links: `http(s)` opens in the system browser
+  `preview.markdownCodeWrap`, a find bar (`Mod-f`, the `preview.find` command; it
+  marks matches with the CSS Custom Highlight API and is routed like zoom),
+  links: `http(s)` opens in the system browser
   (`@tauri-apps/plugin-opener`), relative `.md` opens in Kestrel, `#anchor`
   scrolls. HTML `PreviewProvider` (`.html`, `.htm`): live render of the
   editor text through `srcdoc` plus `<base>`; scripts off unless

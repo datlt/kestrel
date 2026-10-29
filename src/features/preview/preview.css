@@ -1,5 +1,6 @@
 /* Styles of the preview feature (outside the iframes). */
 .preview-root {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -49,6 +50,53 @@
 .preview-btn[aria-pressed='true'] {
   background: var(--active);
   border-color: var(--accent);
+}
+/* Find bar of the Markdown preview, over the top right corner of the frame. */
+.preview-find {
+  position: absolute;
+  top: 8px;
+  right: 20px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  color: var(--fg);
+  font-size: 12px;
+}
+.preview-find[hidden] {
+  display: none;
+}
+.preview-find-input {
+  width: 180px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+.preview-find-input:focus {
+  border-color: var(--accent);
+}
+.preview-find.no-results .preview-find-input {
+  border-color: var(--danger);
+}
+.preview-find-count {
+  min-width: 60px;
+  padding: 0 4px;
+  color: var(--fg-muted);
+  text-align: center;
+  white-space: nowrap;
+}
+.preview-find-btn {
+  padding: 0 4px;
 }
 .preview-note {
   color: var(--fg-faint);

@@ -260,6 +260,8 @@ export interface TabContent {
   confirmClose?(): Promise<boolean>;
   /** Zoom step: 1 = in, -1 = out, 0 = reset. Return true when handled. */
   zoom?(step: 1 | -1 | 0): boolean;
+  /** Open the find bar of the content (the preview or the code search). Return true when handled. */
+  find?(): boolean;
 }
 
 export interface TabInput {
@@ -542,6 +544,8 @@ export interface PreviewInstance {
   /** Editor scrolled: 1-based line at the top of the editor viewport. */
   revealLine?(line: number): void;
   zoom?(step: 1 | -1 | 0): void;
+  /** Open the find bar of the preview. */
+  find?(): void;
   dispose(): void;
 }
 

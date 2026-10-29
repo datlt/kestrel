@@ -73,6 +73,13 @@ export function initPreview(ctx: AppContext): void {
   registerImageViewer(ctx);
   ctx.commands.registerMany([
     {
+      id: 'preview.find',
+      title: 'Find in Preview',
+      category: 'View',
+      keybinding: 'Mod-f',
+      run: () => void ctx.tabs.active()?.content?.find?.(),
+    },
+    {
       id: 'preview.toggleCodeWrap',
       title: 'Toggle Line Wrap in Markdown Code Blocks',
       category: 'View',

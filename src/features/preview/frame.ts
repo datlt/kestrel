@@ -23,13 +23,12 @@ export function currentScheme(): 'light' | 'dark' {
  * The frame has focus when the user clicks in it, so key presses do not reach
  * the shell. This sends key presses with Ctrl, Cmd or Alt (and function keys)
  * to the main window as a copy. If the shell handles the key, we stop the
- * original event.
+ * original event. The Shift key goes too (down and up), for "Shift pressed
+ * twice" (Search Everywhere).
  */
 export function forwardKeys(doc: Document): void {
-  doc.addEventListener('keydown', (e) => {
-    const special = e.ctrlKey || e.metaKey || e.altKey || /^F\d+$/.test(e.key);
-    if (!special) return;
-    const copy = new KeyboardEvent('keydown', {
+  const forward = (type: 'keydown' | 'keyup', e: KeyboardEvent) => {
+    const copy = new KeyboardEvent(type, {
       key: e.key,
       code: e.code,
       ctrlKey: e.ctrlKey,
@@ -42,6 +41,13 @@ export function forwardKeys(doc: Document): void {
     });
     window.dispatchEvent(copy);
     if (copy.defaultPrevented) e.preventDefault();
+  };
+  doc.addEventListener('keydown', (e) => {
+    const special = e.ctrlKey || e.metaKey || e.altKey || /^F\d+$/.test(e.key) || e.key === 'Shift';
+    if (special) forward('keydown', e);
+  });
+  doc.addEventListener('keyup', (e) => {
+    if (e.key === 'Shift') forward('keyup', e);
   });
 }
 

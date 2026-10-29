@@ -4,6 +4,7 @@
 
 import { history } from '@codemirror/commands';
 import type { LanguageSupport } from '@codemirror/language';
+import { openSearchPanel } from '@codemirror/search';
 import { EditorSelection, EditorState, Text, type Extension } from '@codemirror/state';
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { h } from '../core/dom';
@@ -343,6 +344,13 @@ export class FileEditorImpl implements FileEditor, TabContent {
   zoom(step: 1 | -1 | 0): boolean {
     if (!this.previewHost.zoom(step)) this.host.zoom(step);
     return true;
+  }
+
+  find(): boolean {
+    if (this.previewHost.find()) return true;
+    if (this.previewHost.getMode() === 'preview') return false;
+    this.view.focus();
+    return openSearchPanel(this.view);
   }
 
   dispose(): void {

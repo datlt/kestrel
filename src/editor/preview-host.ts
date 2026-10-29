@@ -132,6 +132,15 @@ export class PreviewHost {
     return true;
   }
 
+  /** Find goes to the preview when it has focus or is the only pane. Returns true when handled. */
+  find(): boolean {
+    if (!this.instance?.find || this.mode === 'code') return false;
+    const focused = !!this.previewEl && this.previewEl.contains(document.activeElement);
+    if (!focused && this.mode !== 'preview') return false;
+    this.instance.find();
+    return true;
+  }
+
   focusPreview(): void {
     this.previewEl?.focus();
   }

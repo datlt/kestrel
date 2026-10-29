@@ -78,4 +78,6 @@ body.code-wrap #md pre,body.code-wrap #md pre code{white-space:pre-wrap;overflow
 #md sup.footnote-ref a{padding:0 2px;}
 #md .footnote-backref{margin-left:4px;}
 #md mark{background:var(--selection);color:inherit;}
+::highlight(kestrel-find){background-color:rgba(255,214,10,.4);color:inherit;}
+::highlight(kestrel-find-current){background-color:rgba(255,140,0,.65);color:inherit;}
 `;

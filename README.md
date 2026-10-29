@@ -601,6 +601,7 @@ Main settings:
 | Find in files, replace in files | Mod-Shift-f, Mod-Shift-r |
 | Search Everywhere, Go to Class, Go to Symbol, actions | Shift Shift, Mod-Shift-o, Mod-Alt-o (or Mod-t), Mod-Shift-a |
 | Find, replace in the file | Mod-f; Mod-Alt-f (macOS) or Mod-h |
+| Find in the Markdown preview | Mod-f (Enter: next, Shift-Enter: previous, Esc: close) |
 | Go to line | Ctrl-g |
 | New draft | Mod-n |
 | Save, save as, save all | Mod-s, Mod-Shift-s, Mod-Alt-s |
