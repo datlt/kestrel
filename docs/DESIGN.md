@@ -274,6 +274,7 @@ Use these ids and keys. `Mod` = Cmd on macOS, Ctrl elsewhere. Keys marked
 | `git.switchBranch` | Mod-Shift-b, click on `git.branch` | git |
 | `github.showPullRequests` / `github.refresh` / `github.openPullRequest` | (palette) | github-ui |
 | `terminal.run` | (hidden, `{ command, title?, cwd? }`) | terminal |
+| `graph.show` / `graph.showLocal` / `graph.showFolder` | Mod-Alt-g / Mod-Shift-Alt-g / (palette, explorer menu) | graph-view |
 
 View ids: sidebar `explorer` (order 10), `search` (20), `git` (30);
 panel `problems` (10), `usages` (15), `call-hierarchy` (16), `lsp-output` (20); sidebar `github` (40).
@@ -283,7 +284,8 @@ right `editor.cursor` (100), `editor.indent` (90), `editor.encoding` (80),
 `editor.eol` (70), `editor.language` (60), `preview.info` (40).
 
 Tab kinds and ids: `file` (`file:<path>`), `diff` (`diff:<base>:<path>`),
-`image` (`image:<path>`), `diagram` (`diagram:<n>`), `pr` (`pr:<host>/<owner>/<repo>#<n>`).
+`image` (`image:<path>`), `diagram` (`diagram:<n>`), `pr` (`pr:<host>/<owner>/<repo>#<n>`),
+`graph` (`graph:<n>`).
 
 ## 7. Feature specs
 
@@ -1149,3 +1151,231 @@ macOS the commands also get `Ctrl-Shift-f`, `Ctrl-Shift-r` and
   opens in the background, Escape closes. Results arrive while you type
   (debounced 80 ms, stale requests cancelled with `codeCancel`). The first
   use shows "Reading the project's files..." while the index builds.
+
+## 14. Round 8: Graph View of markdown files (like Obsidian)
+
+The user wants the Graph View of Obsidian for the markdown files of the open
+folder, and the folder tree must stay visible in it.
+
+### 14.1 Ownership
+
+| Area | Owner | Files |
+|------|-------|-------|
+| Note index | notes-backend | `crates/kestrel-notes/**`, `src-tauri/src/cmd/notes.rs`, the `notes` lines in `src-tauri/src/cmd/mod.rs`, the `kestrel-notes` lines in the root `Cargo.toml` and `src-tauri/Cargo.toml`, the `notes_*` section at the end of `scripts/dev-bridge.mjs`, `notes` in `APP_COMMAND` of `src/dev/browser-backend.ts` |
+| Graph model | graph-model | `src/features/graph/model/**` (pure functions and their tests) |
+| Graph view | graph-view | `src/features/graph/**` except `model/**` and `types.ts`, the graph items in `menuFor` of `src/features/files/explorer.ts` |
+| Large CSV files | csv | `src/features/preview/csv*`, the large-file opt-in in `src/editor/**` and `src/core/types.ts` |
+| Contracts and wiring | integrator | `src/ipc/notes.ts`, `src/features/graph/types.ts`, `src/window/workbench.ts`, wiki links in the markdown preview (`crates/kestrel-markdown`, `src/features/preview/markdown.ts`), npm packages |
+
+New npm packages (installed): `d3-force`, `d3-quadtree`, `d3-hierarchy`,
+`d3-polygon` and their `@types`.
+
+### 14.2 Note index (`kestrel-notes`, `cmd/notes.rs`)
+
+- One index per root, shared by the windows that use it (ref count by window
+  label, like `CodeManager` in 11.3). Built on the first `notes_graph` or
+  `notes_resolve` call, in parallel (rayon). Calls wait while it builds.
+  `notes_index_update(root, paths, rescan)` reads only the changed files;
+  `notes_index_drop` and `on_window_destroyed` free it. `notes_cancel(id)`
+  stops a running `notes_graph` (key: window label and id).
+- Walk: follow `.gitignore` (crate `ignore`, `require_git(false)`); never
+  enter a folder whose name starts with `.` (`.git`, `.obsidian`, `.trash`,
+  `.github`, `.claude` ...); skip `node_modules`, `Pods`, `Carthage`,
+  `DerivedData`, and `build`, `out`, `target` folders next to a build file
+  (rule of 11.3, plus `Cargo.toml` and `package.json`). Notes are `.md`,
+  `.markdown` and `.mdx` files up to 5 MB (bigger ones are nodes without
+  links). At most 20,000 notes (`truncated`). Other files are kept by path
+  and by name for attachments, at most 200,000.
+- The index keeps no text. Per note: rel path, title, tags, aliases, size,
+  mtime and the raw links (target text, wiki or markdown, embed, line).
+  Resolved links are computed again after files are added, removed or
+  renamed (resolution depends on the names of all files); the result is
+  cached until the next change.
+- Reading a note (hand-written scanner, one pass, no regex):
+  - Front matter: `---` on the first line up to `---` or `...`. Keys
+    `title`, `tags`/`tag`, `aliases`/`alias`; values as a YAML list
+    (`[a, b]` or `- a` lines) or one string (tags split by comma or space).
+    `#` before a tag is dropped.
+  - Not links: fenced code (```` ``` ```` or `~~~`, three or more, closed by
+    the same character, at least as many), indented code (4 spaces or a tab
+    after a blank line, outside lists), inline code spans (same number of
+    backticks), HTML comments `<!-- -->`, Obsidian comments `%% %%`, math
+    blocks `$$ $$`, and backslash escapes.
+  - Wiki links: `[[target]]`, `[[target|alias]]`, `[[target#heading]]`,
+    `[[target#^block]]`, `[[folder/target]]`, embeds `![[target]]`;
+    `\|` in tables is a pipe; `[[#heading]]` is a link to the same note
+    (dropped). No line breaks inside.
+  - Markdown links: `[text](dest)`, `[text](dest "title")`,
+    `[text](<dest with spaces>)`, images `![alt](dest)`, reference
+    definitions `[id]: dest` (each definition is one link). Destinations with
+    a scheme (`http:`, `mailto:`, `obsidian:` ... any `[A-Za-z][A-Za-z0-9+.-]*:`)
+    and `#anchor` only are not links. `#fragment` and `?query` are cut,
+    then the text is percent-decoded. Parentheses inside need to balance.
+  - Tags: `#tag` after the line start or a space; letters (any script,
+    `#日本語`), digits, `_`, `-`, `/`; at least one character that is not a
+    digit; not inside links or code. `# Heading` is not a tag.
+  - Title: front matter `title`, else the first `# ` heading outside code.
+- Resolving a link of note `N` (target `t` without `#...`):
+  1. Markdown links: relative to the folder of `N` (a leading `/` means the
+     root), then the same case-insensitive, then with `.md` added when `t`
+     has no extension. Not found: step 3.
+  2. Wiki links: relative to the folder of `N`, then from the root (each
+     with `.md` added when `t` has no markdown extension).
+  3. By name, case-insensitive: notes (or, when `t` has a non-markdown
+     extension, files) whose rel path ends with `/t(.md)` or is `t(.md)`;
+     then by front matter alias. Several candidates: the one in the folder
+     of `N`, else the longest common folder prefix with `N`, else the
+     shortest rel path, else the first by path.
+  4. Not found: a `missing` node. Its path: for markdown links the joined
+     path (plus `.md` when there is no extension); for wiki links with a `/`
+     the path from the root; for other wiki links the folder of the first
+     note (by path) that links to it. Missing nodes merge by their lower-case
+     rel path (bare wiki links merge by lower-case name).
+  Targets outside the root and folders are ignored. Links from a note to
+  itself are dropped. Links to existing non-markdown files make
+  `attachment` nodes.
+- Speed (release, 8 cores): 10,000 notes of 5 KB build in under 1 s; one
+  changed file updates in under 20 ms; `notes_graph` for 10,000 notes and
+  50,000 links answers in under 100 ms.
+- `notes_resolve(root, from, target, wiki)` uses the same rules (for the
+  preview). Returns null for external URLs and for `#heading` only.
+- Dev bridge: `crates/kestrel-notes/examples/dev_http.rs` serves the
+  `notes_*` commands on 127.0.0.1:1437 (`KESTREL_NOTES_DEV_PORT`), and
+  `scripts/dev-bridge.mjs` forwards them, like `code_*` (11.3).
+
+### 14.3 Wiki links in the markdown preview (integrator)
+
+comrak renders `[[target|alias]]` as a link with `data-wikilink`. A click
+calls `notesResolve` and opens the note (markdown in preview mode) at the
+heading; a missing note asks "Create note X.md?". Markdown links that do not
+resolve as a path use the same call. In browser dev mode, `md_render` goes to the notes
+dev_http (real comrak) when it runs, else to the small JS renderer of the
+dev bridge. The hidden command `explorer.revealPath` (argument: a path)
+selects a file or folder in the explorer for the graph.
+
+### 14.4 Graph model (`src/features/graph/model/**`)
+
+Pure functions, exported from `model/index.ts` with the names and types that
+the file has now (see `src/features/graph/types.ts`). Unit tests for all of them.
+
+- `buildFolderTree(graph, colorDepth, theme)`: the folders that hold nodes
+  (notes, attachments, missing nodes), with counts and colors.
+- `buildVisibleGraph(input)`, in this order:
+  1. Scope: `project` = all; `folder` = the notes under the folder and the
+     attachment and missing nodes they link to (the tree starts at that
+     folder); `local` = breadth first from the center note over link edges
+     (`incoming`, `outgoing`) up to `depth`, without `neighborLinks` only
+     the edges found on the way. Tag nodes count as steps when `showTags` is on.
+  2. Filters: `query` (on notes, attachments and missing nodes; a node of
+     the local center always stays), `showAttachments`, `existingOnly`,
+     hidden folders (all nodes below them).
+  3. Tags: with `showTags`, one node per tag (lower case id, first spelling
+     as the label) and `tag` edges from its notes. Nested tags link to
+     their notes only (no tag tree).
+  4. Collapsed folders: the folder becomes one node (`collapsed`, `weight` =
+     notes inside); edges of the nodes inside move to it and merge (counts
+     summed), edges inside the folder disappear. Works with `showFolders` off too.
+  5. Folders: with `showFolders` (always in `radial` and `tree`), one node
+     per folder that has visible nodes below it, and `tree` edges from each
+     node to its folder (the root folder too). A parent comes before its
+     children in `nodes`.
+  6. Orphans: without `showOrphans`, nodes with `degree` 0 go (folder nodes
+     are not orphans; a folder without visible nodes below it goes).
+  7. `both` for pairs with links in both directions; `degree`; colors
+     (first matching group, else `colorBy`: folder color of the folder at
+     `colorDepth` on the path, or a stable color per first tag); labels.
+  Stats and `emptyReason` ("No markdown files in this folder.", "Open a
+  markdown file to see its local graph.", "No notes match the filter.").
+- `compileQuery(text)`, like the Obsidian search (case-insensitive):
+  words must all match the rel path (AND); `"exact phrase"`; `-term`
+  excludes; `OR` between terms; `( )` groups; `path:`, `file:` (file
+  name), `tag:` (`tag:#api` or `tag:api`, also matches `api/v2`),
+  `title:`, `/regex/` on the rel path. A broken query sets `error`.
+- `treeLayout(g, 'radial' | 'tree')`: d3-hierarchy over the folder tree
+  (folders, then files). `radial`: leaves on circles (cluster layout), the
+  radius grows with the number of leaves so labels do not overlap. `tree`:
+  left to right, folders as columns. Tag nodes sit in a group of their own
+  next to the root. Collapsed folders are leaves.
+- `bundlePath(g, edge, pos, beta)`: hierarchical edge bundling. The
+  control points go from the source up the folder chain to the lowest
+  common folder and down to the target; `beta` pulls them toward the straight
+  line (Holten 2006). The view draws them as a B-spline.
+- `folderHulls(g, pos, padding)`: for each folder except the root that has
+  at least one visible node below it, a padded convex hull (d3-polygon) of
+  those nodes, with rounded corners (points on circles around the nodes).
+  Deeper folders get less padding, so they stay inside their parents.
+- `nodeRadius(node, nodeSize)`: grows with the square root of the degree;
+  folders with their `weight`.
+- Palettes for light and dark themes (12 colors with good contrast on the
+  editor background); `normalizeOptions`, `normalizeFolderState`,
+  `normalizeScope` check every field and clamp the numbers.
+- Speed: `buildVisibleGraph` for 20,000 notes and 100,000 links under
+  100 ms; `treeLayout` under 100 ms; `folderHulls` for 500 folders and 5,000
+  nodes under 8 ms (the view calls it often during the simulation).
+
+### 14.5 Graph view (`src/features/graph/**`)
+
+- Tab kind `graph`, id `graph:<n>`, restored from the session with its
+  `GraphTabState`. Title from `graphTitle`. Commands:
+  - `graph.show` "Open Graph View" (Mod-Alt-g): whole project.
+  - `graph.showLocal` "Open Local Graph" (Mod-Shift-Alt-g; argument: a file
+    path; without it the active markdown file, and the graph follows the
+    active editor).
+  - `graph.showFolder` "Show Graph for Folder" (argument: folder path;
+    explorer menu of folders). The explorer menu of markdown files gets
+    "Show Local Graph".
+- Data: `notesGraph` (shows "Reading notes..." while the index builds). The
+  feature keeps the note index up to date like the diagram keeps the code
+  index (11.3): `fs:changed` paths (all files, not only markdown) go to
+  `notesIndexUpdate` (debounced 400 ms), then open graph tabs load the
+  graph again and keep the positions of nodes they already have (new nodes
+  start next to their folder or a linked node). `workspace:will-change`
+  drops the index.
+- Drawing: one `<canvas>` (device pixel ratio, redraw only when something
+  changes), pan with drag on the background, zoom with the wheel and
+  pinch (Mod-= / Mod-- / Mod-0 through the tab `zoom()`), a Fit button.
+  Notes are circles, attachments small squares, missing notes hollow
+  circles, tags small diamonds, folders rounded squares with the folder
+  name (collapsed folders bigger, with the count). Tree edges are thin and
+  faint, tag edges dotted, link edges solid (width from `linkThickness` and
+  `count`), arrows with `arrows`. Labels fade in with the zoom
+  (`textFade`), the hovered node and its neighbors always have labels.
+  Folder outlines (`folderOutlines`) are filled with a light tint of the
+  folder color and show the folder name at the top. Theme colors come from
+  the CSS variables and change on `theme:changed`.
+- Layouts: `force` runs d3-force in a Web Worker (link, many-body
+  (Barnes-Hut), center, collide, and a folder force that pulls nodes to the
+  center of their folder with `folderPull`; tree edges are springs too).
+  Positions come back as a `Float32Array` per tick. The simulation cools
+  down and stops; dragging a node pins it while it moves and warms the
+  simulation. `radial` and `tree` use `treeLayout` and animate from the old
+  positions to the new ones (300 ms); links are bundled (`bundling`).
+- Hover: the node, its edges and neighbors stay bright, the rest dims
+  (animated). Click a note or attachment: open it (markdown in the default
+  mode). Mod-click: open in the background. Click a folder: highlight its
+  nodes; double click: collapse or expand it. Click a missing note: ask
+  "Create note X.md?", then create it with `# X` and open it. Right click:
+  Open, Open Local Graph, Reveal in Explorer, Copy Path, Collapse / Expand
+  Folder, Hide Folder.
+- The node of the active editor is marked (ring). A local graph with
+  `follow` moves its center when another markdown file becomes active.
+- Toolbar: the scope ("Graph: docs" ...), layout switch (Force, Radial,
+  Tree), search field (the query, with the error under it), counts
+  ("123 notes, 456 links"), Fit, the Settings button, the Folders button.
+- Settings panel (floating on the right, sections that fold, like
+  Obsidian): Filters (search, Tags, Attachments, Existing files only,
+  Orphans), Groups (query + color + delete, "New group"), Display (Arrows,
+  Label: name or title, Text fade, Node size, Link thickness, Bundling),
+  Forces (Center, Repel, Link force, Link distance, Folder pull), Folders
+  (Show folders, Folder outlines, Color by: folder, tag, none, Color depth),
+  Local graph (Depth, Incoming, Outgoing, Neighbor links, Follow active note).
+  "Reset" puts the defaults back. Changes apply at once and are saved
+  (`OPTIONS_KEY` in `globalState`, and the tab state).
+- Folders panel (on the left, can be closed): the folder tree from
+  `buildFolderTree` with a color dot, the note count, an eye button (hide)
+  and a collapse button per folder. Hover a folder: its nodes light up;
+  click: zoom to its nodes. The state is `FolderState`, saved in the tab
+  and in `workspace.state` (`FOLDERS_KEY`) for the next graph of the project.
+- Speed: 5,000 notes and 20,000 links stay smooth (60 fps while the
+  simulation runs, no drawing when nothing moves); 20,000 notes stay usable
+  (fewer labels, simpler shapes when zoomed out). Hit tests use d3-quadtree.

@@ -1,4 +1,5 @@
-use comrak::{Options, markdown_to_html};
+use comrak::nodes::{AstNode, NodeValue};
+use comrak::{Arena, Options, format_html, markdown_to_html, parse_document};
 
 fn options() -> Options<'static> {
     let mut o = Options::default();
@@ -10,6 +11,9 @@ fn options() -> Options<'static> {
     e.footnotes = true;
     e.description_lists = true;
     e.alerts = true;
+    // `[[target|label]]` (Obsidian) becomes `<a href="target" data-wikilink="true">`.
+    // The preview resolves the target with the note index when you click it.
+    e.wikilinks_title_after_pipe = true;
     e.front_matter_delimiter = Some("---".to_string());
     // An empty prefix turns on heading ids without changing the id text.
     e.header_id_prefix = Some(String::new());
@@ -30,16 +34,38 @@ pub fn render_safe(text: &str) -> String {
     o.render.sourcepos = false;
     o.extension.front_matter_delimiter = None;
     o.extension.header_id_prefix = None;
+    o.extension.wikilinks_title_after_pipe = false;
     markdown_to_html(text, &o)
 }
 
 /// Renders markdown to HTML. Block elements carry `data-sourcepos="l:c-l:c"`.
 /// A front matter block at the top is shown as a small table.
 pub fn render(text: &str) -> String {
-    let body = markdown_to_html(text, &options());
+    let o = options();
+    let arena = Arena::new();
+    let root = parse_document(&arena, text, &o);
+    mark_embeds(&arena, root);
+    let mut body = String::new();
+    // Writing to a String does not fail.
+    let _ = format_html(root, &o, &mut body);
     match front_matter(text) {
         Some(fm) => format!("{fm}{body}"),
         None => body,
+    }
+}
+
+/// comrak renders `![[x]]` like `[[x]]`. This puts each embed in
+/// `<span class="wikilink-embed">`, so the preview can show embedded images.
+fn mark_embeds<'a>(arena: &'a Arena<'a>, root: &'a AstNode<'a>) {
+    let embeds: Vec<_> = root
+        .descendants()
+        .filter(|n| matches!(&n.data().value, NodeValue::WikiLink(w) if w.embed))
+        .collect();
+    for n in embeds {
+        let open = arena.alloc(NodeValue::HtmlInline("<span class=\"wikilink-embed\">".into()).into());
+        let close = arena.alloc(NodeValue::HtmlInline("</span>".into()).into());
+        n.insert_before(open);
+        n.insert_after(close);
     }
 }
 
@@ -163,6 +189,18 @@ mod tests {
     fn no_front_matter_when_not_closed() {
         let html = render("---\nnot closed\n");
         assert!(!html.contains("front-matter"), "{html}");
+    }
+
+    #[test]
+    fn wiki_links() {
+        let html = render("See [[Auth Flow#Login|the login]] and [[ノート/設計]].\n\n![[logo.png]]\n");
+        assert!(html.contains("data-wikilink=\"true\""), "{html}");
+        assert!(html.contains(">the login</a>"), "{html}");
+        assert!(html.contains("設計"), "{html}");
+        assert!(html.contains("<span class=\"wikilink-embed\"><a"), "{html}");
+        assert_eq!(html.matches("wikilink-embed").count(), 1, "{html}");
+        // Pull request comments keep the brackets as text.
+        assert!(!render_safe("[[Auth]]").contains("data-wikilink"));
     }
 
     #[test]

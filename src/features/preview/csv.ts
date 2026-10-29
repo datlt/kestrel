@@ -30,7 +30,6 @@ const MIN_W = 48;
 const MAX_W = 360;
 const SAMPLE_ROWS = 200;
 const BIG_SORT_ROWS = 50_000;
-const BIG_TEXT = 1_000_000;
 
 type Choice = Delimiter | 'auto';
 const NAMES: Record<Delimiter, string> = { ',': 'Comma', ';': 'Semicolon', '\t': 'Tab', '|': 'Pipe' };
@@ -68,11 +67,14 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
   let sortToken = 0;
   let sel: { pos: number; col: number } | null = null;
   let dirty = true;
+  /** True while the table only holds the first rows and the worker still reads. */
+  let reading = false;
   let infoText = '';
+  let readRows = 0;
+  let layoutDone = false;
   let pendingLine: number | null = null;
   let suppressScrollUntil = 0;
   let cancelDrag: (() => void) | null = null;
-  let updateTimer: ReturnType<typeof setTimeout> | undefined;
   // Values from the last layout.
   let lk = 1;
   let lastHeader = '';
@@ -173,6 +175,7 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
     sizer.style.height = `${hh + bodyH}px`;
     header.style.cssText = `width:${w}px;height:${hh}px;line-height:${hh}px`;
     body.style.cssText = `top:${hh}px;width:${w}px;height:${bodyH}px`;
+    layoutDone = true;
     return true;
   }
 
@@ -317,7 +320,9 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
     if (!table) {
       infoText = '';
     } else {
-      infoText = `${plural(dataCount(), 'row', 'rows')} × ${plural(table.cols, 'column', 'columns')}`;
+      infoText = reading
+        ? `Reading rows… ${readRows.toLocaleString('en-US')}`
+        : `${plural(dataCount(), 'row', 'rows')} × ${plural(table.cols, 'column', 'columns')}`;
     }
     info.textContent = infoText;
     const auto = delimSelect.options[0];
@@ -329,26 +334,69 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
     setPreviewInfo(ctx, owner, active && table && infoText ? infoText : null, editor.path);
   }
 
-  function applyTable(t: CsvTable, keepWidths: boolean): void {
+  function applyTable(t: CsvTable, keepWidths: boolean, sorted?: Uint32Array | null): void {
+    // Keep the top row where it is: the scroll factor changes when the table grows.
+    const topRow = table && layoutDone ? topPos() : -1;
+    const oldLk = lk;
     table = t;
-    if (!keepWidths || widths.length !== t.cols) widths = measureWidths(t);
+    if (!keepWidths || widths.length !== t.cols) {
+      const measured = measureWidths(t);
+      // A table that grows keeps the widths of the columns it already had.
+      widths = keepWidths ? measured.map((w, c) => widths[c] ?? w) : measured;
+    }
     if (sort && sort.col >= t.cols) sort = null;
-    order = sort ? sortRows(t, text, first(), sort.col, sort.desc) : null;
+    if (sorted !== undefined) order = sort ? sorted : null;
+    else order = sort ? sortRows(t, text, first(), sort.col, sort.desc) : null;
     if (sel && (sel.pos >= dataCount() || sel.col >= t.cols)) sel = null;
     computeOffsets();
     const hasData = t.rows > 0;
     viewport.hidden = !hasData;
     empty.hidden = hasData;
+    if (topRow >= 0 && layout()) {
+      if (lk !== oldLk) {
+        suppressScrollUntil = performance.now() + 250;
+        setVTop(topRow * rowH());
+      }
+    }
     updateInfo();
     invalidate();
   }
 
-  async function reparse(keepWidths: boolean): Promise<void> {
+  async function reparse(keepWidths: boolean, stream: boolean): Promise<void> {
     const seq = ++parseSeq;
+    reading = false;
     if (!table) info.textContent = 'Parsing…';
-    const t = await client.parse(text, choice, hint);
+    // Big texts show the first rows early. A table that is already on screen stays
+    // until the new one is ready (an edit), so it does not flicker.
+    let shown = false;
+    const progress = stream
+      ? {
+          onPartial: (partial: CsvTable) => {
+            if (disposed || seq !== parseSeq) return;
+            reading = true;
+            readRows = partial.rows;
+            sort = null;
+            applyTable(partial, shown || (keepWidths && table !== null && table.delimiter === partial.delimiter && widths.length > 0));
+            shown = true;
+          },
+          onRows: (n: number) => {
+            if (disposed || seq !== parseSeq) return;
+            readRows = n;
+            updateInfo();
+          },
+        }
+      : undefined;
+    const t = await client.parse(text, choice, hint, progress);
     if (disposed || seq !== parseSeq || !t) return;
-    applyTable(t, keepWidths);
+    let sorted: Uint32Array | null | undefined;
+    if (sort && sort.col < t.cols && t.rows > BIG_SORT_ROWS) {
+      info.textContent = 'Sorting…';
+      sorted = await client.sort(t, text, first(), sort.col, sort.desc);
+      if (disposed || seq !== parseSeq) return;
+      if (!sorted) sort = null;
+    }
+    reading = false;
+    applyTable(t, keepWidths || shown, sorted);
   }
 
   function saveState(): void {
@@ -400,14 +448,16 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
   // --- Sorting -----------------------------------------------------------------
   function toggleSort(col: number): void {
     if (!table) return;
+    // The table is not complete yet: a sort would only cover the rows read so far.
+    if (reading) return;
     if (!sort || sort.col !== col) sort = { col, desc: false };
     else if (!sort.desc) sort = { col, desc: true };
     else sort = null;
     const selectedRow = sel ? rowAt(sel.pos) : -1;
     const token = ++sortToken;
-    const run = () => {
+    const done = (next: Uint32Array | null) => {
       if (disposed || token !== sortToken || !table) return;
-      order = sort ? sortRows(table, text, first(), sort.col, sort.desc) : null;
+      order = next;
       if (sel) {
         const pos = posOfRow(selectedRow);
         sel = pos < 0 ? null : { pos, col: sel.col };
@@ -415,11 +465,18 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
       info.textContent = infoText;
       invalidate();
     };
-    if (table.rows > BIG_SORT_ROWS) {
+    if (!sort) {
+      done(null);
+    } else if (table.rows > BIG_SORT_ROWS) {
+      // Big tables sort in the worker. The old order stays on screen until the new one is ready.
       info.textContent = 'Sorting…';
-      setTimeout(run, 0);
+      const want = sort;
+      void client.sort(table, text, first(), want.col, want.desc).then((o) => {
+        if (o) done(o);
+        else if (!disposed && token === sortToken) info.textContent = infoText;
+      });
     } else {
-      run();
+      done(sortRows(table, text, first(), sort.col, sort.desc));
     }
     lastHeader = '';
     schedule();
@@ -554,7 +611,7 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
     saveState();
     sort = null;
     sel = null;
-    void reparse(false);
+    void reparse(false, true);
   });
   headerBtn.addEventListener('click', () => {
     headerRow = !headerRow;
@@ -596,7 +653,6 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
   function cleanup(): void {
     if (disposed) return;
     disposed = true;
-    clearTimeout(updateTimer);
     cancelDrag?.();
     client.dispose();
     resizeObserver.disconnect();
@@ -612,10 +668,10 @@ export function createCsvPreview(ctx: AppContext, host: HTMLElement, editor: Fil
       if (gotText && next === text) return;
       gotText = true;
       text = next;
-      clearTimeout(updateTimer);
       // Parsing a very big text on every key press is wasteful. Wait a little more.
-      if (table && next.length > BIG_TEXT) updateTimer = setTimeout(() => void reparse(true), 300);
-      else void reparse(true);
+      // The first text streams. Later texts (edits) replace the table in one step.
+      // The editor already waits longer before it sends a big text (`pushDelay`).
+      void reparse(true, !table);
     },
     revealLine(line) {
       pendingLine = line;

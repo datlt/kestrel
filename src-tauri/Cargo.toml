@@ -31,3 +31,4 @@ kestrel-db = { workspace = true }
 kestrel-term = { workspace = true }
 kestrel-code = { workspace = true }
 kestrel-gh = { workspace = true }
+kestrel-notes = { workspace = true }

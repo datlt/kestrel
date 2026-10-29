@@ -47,8 +47,10 @@ export function initPreview(ctx: AppContext): void {
       },
     ),
   );
-  ctx.editors.registerPreview(
-    lazyProvider(
+  // The CSV table and the column colors also work for large files (they only
+  // draw what is on screen), so both say `largeFiles`.
+  ctx.editors.registerPreview({
+    ...lazyProvider(
       ctx,
       'preview.csv',
       (path) => CSV_FILE.test(path),
@@ -58,11 +60,15 @@ export function initPreview(ctx: AppContext): void {
         return (host, editor) => createCsvPreview(ctx, host, editor);
       },
     ),
-  );
-  // Column colors in the code view. The module loads only for CSV files.
-  ctx.editors.registerExtension((editor) => {
-    if (!CSV_FILE.test(editor.path)) return null;
-    return import('./csv-colors').then((m) => m.csvColorExtension(editor));
+    largeFiles: true,
   });
+  // Column colors in the code view. The module loads only for CSV files.
+  ctx.editors.registerExtension(
+    (editor) => {
+      if (!CSV_FILE.test(editor.path)) return null;
+      return import('./csv-colors').then((m) => m.csvColorExtension(editor));
+    },
+    { largeFiles: true },
+  );
   registerImageViewer(ctx);
 }

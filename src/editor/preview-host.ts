@@ -1,10 +1,12 @@
 // The Code / Split / Preview switch of a file tab, the preview pane and the
 // scroll sync. It only exists for files that have a matching PreviewProvider.
 
+import type { Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { h } from '../core/dom';
 import type { FileEditor, PreviewInstance, PreviewProvider, ViewMode } from '../core/types';
-import { debounce, rafThrottle } from '../core/util';
+import { rafThrottle } from '../core/util';
+import { pushDelay } from './large';
 
 export interface PreviewOwner {
   /** The real editor. */
@@ -42,7 +44,16 @@ export class PreviewHost {
   private suppressUntil = 0;
   private disposed = false;
 
-  private readonly pushLater = debounce(() => this.pushText(), 150);
+  /** The document that the preview got last. The same document is not sent twice. */
+  private pushedDoc: Text | null = null;
+  private pushTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly pushLater = Object.assign(
+    () => {
+      clearTimeout(this.pushTimer);
+      this.pushTimer = setTimeout(() => this.pushText(), pushDelay(this.view.state.doc.length));
+    },
+    { cancel: () => clearTimeout(this.pushTimer) },
+  );
   private readonly syncScroll = rafThrottle(() => this.sendScroll());
   private readonly onEditorScroll = () => this.syncScroll();
 
@@ -140,7 +151,11 @@ export class PreviewHost {
       this.stale = true;
       return;
     }
-    this.instance.update(this.owner.editor.getText());
+    const doc = this.view.state.doc;
+    if (doc !== this.pushedDoc) {
+      this.pushedDoc = doc;
+      this.instance.update(this.owner.editor.getText());
+    }
     this.stale = false;
   }
 
@@ -157,6 +172,7 @@ export class PreviewHost {
     if (this.instance || !this.provider || !this.previewEl) return;
     try {
       this.instance = this.provider.create(this.previewEl, this.previewEditor());
+      this.pushedDoc = null;
       this.stale = true;
       this.pushText();
     } catch (e) {

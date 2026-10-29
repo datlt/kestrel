@@ -9,6 +9,7 @@ import type {
   Disposable,
   EditorExtensionProvider,
   EditorService,
+  ExtensionOptions,
   FileEditor,
   FileMeta,
   FileOpener,
@@ -30,6 +31,7 @@ import { FileEditorImpl, type Position, type TabData } from './file-editor';
 import type { EngineHost } from './host';
 import { buildHighlightCss, highlightToHtmlString, kestrelHighlighter } from './highlight';
 import { languageIdFor, loadLanguageById, loadLanguageSupport, preloadFenceLanguages, resolveLanguageId } from './languages';
+import { largeFileNotice, pickPreview, pickProviders } from './large';
 import { EditorStatus } from './status';
 import { escapeText } from './text';
 
@@ -62,6 +64,7 @@ export class EditorEngine implements EditorService, EngineHost {
   private readonly building = new Map<string, Promise<FileEditorImpl | null>>();
   private readonly openErrors = new Map<string, string>();
   private providers: EditorExtensionProvider[] = [];
+  private readonly providerOptions = new Map<EditorExtensionProvider, ExtensionOptions>();
   private previews: PreviewProvider[] = [];
   private openers: FileOpener[] = [];
   private readonly status: EditorStatus;
@@ -197,12 +200,14 @@ export class EditorEngine implements EditorService, EngineHost {
     return this.openFile(path);
   }
 
-  registerExtension(provider: EditorExtensionProvider): Disposable {
+  registerExtension(provider: EditorExtensionProvider, opts?: ExtensionOptions): Disposable {
     this.providers = [...this.providers, provider];
+    if (opts) this.providerOptions.set(provider, opts);
     for (const ed of this.editors.values()) void ed.applyProvider(provider);
     return {
       dispose: () => {
         this.providers = this.providers.filter((p) => p !== provider);
+        this.providerOptions.delete(provider);
         for (const ed of this.editors.values()) ed.removeProvider(provider);
       },
     };
@@ -266,12 +271,12 @@ export class EditorEngine implements EditorService, EngineHost {
 
   // --- EngineHost -----------------------------------------------------------------------
 
-  findPreview(path: string, languageId: string): PreviewProvider | null {
-    return this.previews.find((p) => p.matches(path, languageId)) ?? null;
+  findPreview(path: string, languageId: string, large = false): PreviewProvider | null {
+    return pickPreview(this.previews, path, languageId, large);
   }
 
-  extensionProviders(): EditorExtensionProvider[] {
-    return this.providers;
+  extensionProviders(large = false): EditorExtensionProvider[] {
+    return pickProviders(this.providers, this.providerOptions, large);
   }
 
   forget(ed: FileEditorImpl): void {
@@ -441,7 +446,7 @@ export class EditorEngine implements EditorService, EngineHost {
 
     if (o.notify) {
       if (large) {
-        this.ctx.ui.notify(`${name} is a large file. It opens in plain mode: no syntax colors and no language features.`, { kind: 'info' });
+        this.ctx.ui.notify(largeFileNotice(name, this.findPreview(path, languageId, true)), { kind: 'info' });
       }
       if (res.lossy) {
         this.ctx.ui.notify(`Some bytes of ${name} are not valid ${res.encoding}. They show as U+FFFD, and saving would lose them.`, { kind: 'warn' });

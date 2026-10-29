@@ -64,6 +64,13 @@ export function registerFileCommands(ctx: AppContext, explorer: Explorer): void 
     // No key binding: Mod-, belongs to `settings.open`.
     { id: 'workspace.openSettingsJson', title: 'Open Settings (JSON)', category: 'Preferences', run: () => openSettingsJson(ctx) },
     { id: 'explorer.revealActiveFile', title: 'Reveal Active File in Explorer', category: 'Explorer', when: hasRoot, run: () => explorer.revealActive() },
+    {
+      id: 'explorer.revealPath',
+      title: 'Reveal in Explorer',
+      category: 'Explorer',
+      hidden: true,
+      run: (arg?: unknown) => (typeof arg === 'string' && arg ? explorer.revealPath(arg) : explorer.revealActive()),
+    },
     { id: 'explorer.newFile', title: 'New File in Explorer', category: 'Explorer', when: hasRoot, run: () => explorer.newFile() },
     { id: 'explorer.newFolder', title: 'New Folder in Explorer', category: 'Explorer', when: hasRoot, run: () => explorer.newFolder() },
     { id: 'explorer.rename', title: 'Rename Selected Item', category: 'Explorer', when: () => explorer.hasSelection(), run: () => explorer.rename() },

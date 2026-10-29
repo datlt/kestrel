@@ -10,8 +10,10 @@ export const programmatic = Annotation.define<boolean>();
 
 export interface EngineHost {
   readonly ctx: AppContext;
-  findPreview(path: string, languageId: string): PreviewProvider | null;
-  extensionProviders(): EditorExtensionProvider[];
+  /** `large`: only previews that work on large files. */
+  findPreview(path: string, languageId: string, large?: boolean): PreviewProvider | null;
+  /** `large`: only providers that work on large files. */
+  extensionProviders(large?: boolean): EditorExtensionProvider[];
   zoom(step: 1 | -1 | 0): void;
   /** The editor was disposed. */
   forget(editor: FileEditorImpl): void;

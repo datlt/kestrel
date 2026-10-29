@@ -8,7 +8,7 @@
 
 const BASE = '/__kestrel';
 const WINDOW_LABEL = 'main';
-const APP_COMMAND = /^(app|fs|ws|search|git|md|preview|lsp|db|web|term|code|gh)_/;
+const APP_COMMAND = /^(app|fs|ws|search|git|md|preview|lsp|db|web|term|code|gh|notes)_/;
 /** Commands that answer with raw bytes instead of JSON. */
 const RAW_RESPONSE = new Set(['fs_read_file', 'git_show']);
 const CHANNEL_PREFIX = '__CHANNEL__:';

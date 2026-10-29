@@ -72,6 +72,8 @@ export interface Explorer {
   rename(): void;
   delete(): Promise<void>;
   revealActive(): Promise<void>;
+  /** Shows the explorer and selects a file or folder inside the open folder (the Graph View uses it). */
+  revealPath(path: string): Promise<void>;
   refresh(): Promise<void>;
   collapseAll(): void;
 }
@@ -267,6 +269,17 @@ export function createExplorer(ctx: AppContext): Explorer {
     }
   }
 
+  async function revealPath(p: string) {
+    const root = model.root?.path;
+    if (!root || !isInside(p, root)) return;
+    const node = await model.reveal(p);
+    if (!node) return;
+    selectedPath = node.path;
+    saveExpanded();
+    ui?.render(true);
+    ui?.scrollTo(node);
+  }
+
   // --- Context menu ---------------------------------------------------------
 
   function revealLabel() {
@@ -311,6 +324,14 @@ export function createExplorer(ctx: AppContext): Explorer {
         label: 'Show Class Diagram',
         run: () => void ctx.commands.execute(diagramCommand, path).catch((e) => ctx.ui.notify(`Cannot show the diagram: ${errorText(e)}`, { kind: 'error' })),
         separatorBefore: !(n && !n.isDir && ctx.commands.get('git.fileHistory')),
+      });
+    }
+    const graphCommand = !n || n.isDir ? 'graph.showFolder' : /\.(md|markdown|mdx)$/i.test(n.name) ? 'graph.showLocal' : null;
+    if (graphCommand && ctx.commands.get(graphCommand)) {
+      items.push({
+        label: graphCommand === 'graph.showFolder' ? 'Show Graph for Folder' : 'Show Local Graph',
+        run: () => void ctx.commands.execute(graphCommand, path).catch((e) => ctx.ui.notify(`Cannot show the graph: ${errorText(e)}`, { kind: 'error' })),
+        separatorBefore: !diagramCommand || !ctx.commands.get(diagramCommand),
       });
     }
     if (!n || n.isDir) {
@@ -784,6 +805,10 @@ export function createExplorer(ctx: AppContext): Explorer {
     revealActive: async () => {
       ctx.views.show('explorer');
       await revealActive();
+    },
+    revealPath: async (path) => {
+      ctx.views.show('explorer');
+      await revealPath(path);
     },
     refresh: () => model.refreshAll(),
     collapseAll: () => {

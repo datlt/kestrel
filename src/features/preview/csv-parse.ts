@@ -56,102 +56,156 @@ const LF = 10;
 const CR = 13;
 
 /**
+ * Parses a text in steps. `run` parses whole rows only: it checks the limit at
+ * the start of a row, so a quoted field with a newline never splits at a step
+ * border. `snapshot` copies what is parsed so far into a table. Rows never change
+ * after they are parsed, so a snapshot is the first rows of the final table.
+ */
+export class CsvParser {
+  private readonly text: string;
+  private readonly delimiter: Delimiter;
+  private readonly n: number;
+  private readonly d: number;
+  private readonly starts: Grow;
+  private readonly ends: Grow;
+  private readonly rowFirst: Grow;
+  private flagBuf: Uint8Array;
+  private fieldCount = 0;
+  private rowCount = 0;
+  private colCount = 0;
+  private i: number;
+
+  constructor(text: string, delimiter: Delimiter) {
+    this.text = text;
+    this.delimiter = delimiter;
+    this.n = text.length;
+    this.d = delimiter.charCodeAt(0);
+    const guess = Math.min(1 << 16, Math.max(64, this.n >> 3));
+    this.starts = new Grow(guess);
+    this.ends = new Grow(guess);
+    this.rowFirst = new Grow(Math.max(16, guess >> 3));
+    this.flagBuf = new Uint8Array(guess);
+    this.i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  }
+
+  get rows(): number {
+    return this.rowCount;
+  }
+
+  /** Position in the text where the next row starts. */
+  get position(): number {
+    return this.i;
+  }
+
+  get done(): boolean {
+    return this.i >= this.n;
+  }
+
+  private addField(s: number, e: number, q: number): void {
+    this.starts.push(s);
+    this.ends.push(e);
+    if (this.fieldCount === this.flagBuf.length) {
+      const next = new Uint8Array(this.flagBuf.length * 2);
+      next.set(this.flagBuf);
+      this.flagBuf = next;
+    }
+    this.flagBuf[this.fieldCount++] = q;
+  }
+
+  /**
+   * Parses rows until the position reaches `until` (checked at the start of each
+   * row), the text ends, or `rows` reaches `maxRows`.
+   */
+  run(until: number = Infinity, maxRows: number = Infinity): void {
+    const { text, n, d } = this;
+    let i = this.i;
+    while (i < n && i < until && this.rowCount < maxRows) {
+      let c = text.charCodeAt(i);
+      if (c === LF || c === CR) {
+        i += c === CR && text.charCodeAt(i + 1) === LF ? 2 : 1;
+        continue;
+      }
+      this.rowFirst.push(this.fieldCount);
+      const first = this.fieldCount;
+      for (;;) {
+        const start = i;
+        let q = 0;
+        if (text.charCodeAt(i) === QUOTE) {
+          q = 1;
+          i++;
+          for (;;) {
+            const close = text.indexOf('"', i);
+            if (close < 0) {
+              i = n;
+              break;
+            }
+            if (text.charCodeAt(close + 1) === QUOTE) {
+              i = close + 2;
+              continue;
+            }
+            i = close + 1;
+            break;
+          }
+          // Text after the closing quote is not valid CSV. Keep it as part of the field.
+          while (i < n) {
+            c = text.charCodeAt(i);
+            if (c === d || c === LF || c === CR) break;
+            i++;
+          }
+        } else {
+          while (i < n) {
+            c = text.charCodeAt(i);
+            if (c === d || c === LF || c === CR) break;
+            i++;
+          }
+        }
+        this.addField(start, i, q);
+        if (i >= n) break;
+        c = text.charCodeAt(i);
+        if (c === d) {
+          i++;
+          if (i >= n) {
+            // The file ends with a delimiter: one more empty field.
+            this.addField(i, i, 0);
+            break;
+          }
+          continue;
+        }
+        i += c === CR && text.charCodeAt(i + 1) === LF ? 2 : 1;
+        break;
+      }
+      this.rowCount++;
+      if (this.fieldCount - first > this.colCount) this.colCount = this.fieldCount - first;
+    }
+    this.i = i;
+  }
+
+  /** The rows parsed so far as a table. It copies the arrays, so parsing can go on. */
+  snapshot(): CsvTable {
+    const rowFirst = new Uint32Array(this.rowFirst.length + 1);
+    rowFirst.set(this.rowFirst.data.subarray(0, this.rowFirst.length));
+    rowFirst[this.rowFirst.length] = this.fieldCount;
+    return {
+      delimiter: this.delimiter,
+      rows: this.rowCount,
+      cols: this.colCount,
+      rowFirst,
+      fieldStart: this.starts.done(),
+      fieldEnd: this.ends.done(),
+      quoted: this.flagBuf.slice(0, this.fieldCount),
+    };
+  }
+}
+
+/**
  * Parses `text`. Handles quotes, `""` escapes, newlines inside quotes, CRLF, LF and CR
  * line ends, and a BOM at the start. Empty lines are skipped.
  * `maxRows` stops early (used for delimiter detection).
  */
 export function parseCsv(text: string, delimiter: Delimiter, maxRows: number = Infinity): CsvTable {
-  const n = text.length;
-  const d = delimiter.charCodeAt(0);
-  const guess = Math.min(1 << 16, Math.max(64, n >> 3));
-  const starts = new Grow(guess);
-  const ends = new Grow(guess);
-  const rowFirst = new Grow(Math.max(16, guess >> 3));
-  let flagBuf = new Uint8Array(guess);
-  let fieldCount = 0;
-  let rows = 0;
-  let cols = 0;
-  let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
-
-  const addField = (s: number, e: number, q: number): void => {
-    starts.push(s);
-    ends.push(e);
-    if (fieldCount === flagBuf.length) {
-      const next = new Uint8Array(flagBuf.length * 2);
-      next.set(flagBuf);
-      flagBuf = next;
-    }
-    flagBuf[fieldCount++] = q;
-  };
-
-  while (i < n && rows < maxRows) {
-    let c = text.charCodeAt(i);
-    if (c === LF || c === CR) {
-      i += c === CR && text.charCodeAt(i + 1) === LF ? 2 : 1;
-      continue;
-    }
-    rowFirst.push(fieldCount);
-    const first = fieldCount;
-    for (;;) {
-      const start = i;
-      let q = 0;
-      if (text.charCodeAt(i) === QUOTE) {
-        q = 1;
-        i++;
-        for (;;) {
-          const close = text.indexOf('"', i);
-          if (close < 0) {
-            i = n;
-            break;
-          }
-          if (text.charCodeAt(close + 1) === QUOTE) {
-            i = close + 2;
-            continue;
-          }
-          i = close + 1;
-          break;
-        }
-        // Text after the closing quote is not valid CSV. Keep it as part of the field.
-        while (i < n) {
-          c = text.charCodeAt(i);
-          if (c === d || c === LF || c === CR) break;
-          i++;
-        }
-      } else {
-        while (i < n) {
-          c = text.charCodeAt(i);
-          if (c === d || c === LF || c === CR) break;
-          i++;
-        }
-      }
-      addField(start, i, q);
-      if (i >= n) break;
-      c = text.charCodeAt(i);
-      if (c === d) {
-        i++;
-        if (i >= n) {
-          // The file ends with a delimiter: one more empty field.
-          addField(i, i, 0);
-          break;
-        }
-        continue;
-      }
-      i += c === CR && text.charCodeAt(i + 1) === LF ? 2 : 1;
-      break;
-    }
-    rows++;
-    if (fieldCount - first > cols) cols = fieldCount - first;
-  }
-  rowFirst.push(fieldCount);
-  return {
-    delimiter,
-    rows,
-    cols,
-    rowFirst: rowFirst.done(),
-    fieldStart: starts.done(),
-    fieldEnd: ends.done(),
-    quoted: flagBuf.slice(0, fieldCount),
-  };
+  const parser = new CsvParser(text, delimiter);
+  parser.run(Infinity, maxRows);
+  return parser.snapshot();
 }
 
 /** Removes the quotes of a field and turns `""` into `"`. */

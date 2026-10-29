@@ -164,7 +164,7 @@ export class FileEditorImpl implements FileEditor, TabContent {
       },
       this.view,
     );
-    const provider = large ? null : host.findPreview(this.path, this.languageIdValue);
+    const provider = host.findPreview(this.path, this.languageIdValue, large);
     if (provider) this.previewHost.attach(provider, init.mode ?? provider.defaultMode(this.path));
 
     this.applyPosition(init.position);
@@ -301,7 +301,7 @@ export class FileEditorImpl implements FileEditor, TabContent {
   }
 
   setMode(mode: ViewMode): void {
-    const provider = this.large ? null : this.host.findPreview(this.path, this.languageIdValue);
+    const provider = this.host.findPreview(this.path, this.languageIdValue, this.large);
     if (provider && !this.previewHost.hasProvider()) this.previewHost.attach(provider, mode);
     else this.previewHost.setMode(mode);
     if (mode !== 'preview') this.view.requestMeasure();
@@ -385,7 +385,7 @@ export class FileEditorImpl implements FileEditor, TabContent {
   }
 
   private syncPreviewProvider(): void {
-    const provider = this.large ? null : this.host.findPreview(this.path, this.languageIdValue);
+    const provider = this.host.findPreview(this.path, this.languageIdValue, this.large);
     const mode = this.previewHost.getMode();
     this.previewHost.attach(provider, provider ? (this.previewHost.hasProvider() ? mode : provider.defaultMode(this.path)) : 'code');
   }
@@ -398,11 +398,12 @@ export class FileEditorImpl implements FileEditor, TabContent {
   // --- Extension providers ----------------------------------------------------------------
 
   async applyProvider(provider: EditorExtensionProvider): Promise<void> {
-    if (this.large || this.disposed || this.providerExts.has(provider) || this.providerPending.has(provider)) return;
+    if (this.disposed || this.providerExts.has(provider) || this.providerPending.has(provider)) return;
+    if (this.large && !this.host.extensionProviders(true).includes(provider)) return;
     this.providerPending.add(provider);
     try {
       const ext = await provider(this);
-      if (this.disposed || !this.host.extensionProviders().includes(provider)) return;
+      if (this.disposed || !this.host.extensionProviders(this.large).includes(provider)) return;
       this.providerExts.set(provider, ext);
       this.flushProviders();
     } catch (e) {
@@ -418,11 +419,10 @@ export class FileEditorImpl implements FileEditor, TabContent {
   }
 
   applyAllProviders(): void {
-    for (const p of this.host.extensionProviders()) void this.applyProvider(p);
+    for (const p of this.host.extensionProviders(this.large)) void this.applyProvider(p);
   }
 
   private resetProviders(): void {
-    if (this.large) return;
     this.providerExts.clear();
     this.flushProviders();
     this.applyAllProviders();

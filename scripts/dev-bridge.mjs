@@ -2250,7 +2250,13 @@ const liveDocs = new Map();
 
 const previewCommands = {
   async md_render({ text }) {
-    return renderMarkdown(text ?? '');
+    // The notes dev server (end of this file) renders with the real comrak
+    // options (wiki links, front matter). Without it, a small JS renderer runs.
+    try {
+      return await forwardNotes('md_render', { text: text ?? '' });
+    } catch {
+      return renderMarkdown(text ?? '');
+    }
   },
   // The real app drops raw HTML (comrak safe mode). Here we escape the whole
   // text, which is safe and good enough for dev tests.
@@ -3314,3 +3320,64 @@ Object.assign(commands, termCommands);
 // --- web_* -------------------------------------------------------------------
 // Web tabs are native web views. A normal browser cannot show them, so the
 // bridge has no web_* commands (they reject with "not available in the browser").
+
+// --- notes_* -----------------------------------------------------------------
+
+// The note index (Graph View, wiki links) runs in real Rust code.
+// `crates/kestrel-notes/examples/dev_http.rs` is a small HTTP server
+// (127.0.0.1:1437) with the same NoteManager as the app. Start it with:
+//   cargo run -p kestrel-notes --example dev_http
+// This section is at the end of the file, so the commands join the `commands`
+// table with Object.assign (like term_*), not in the object literal above.
+const NOTES_HTTP_HOST = '127.0.0.1';
+const NOTES_HTTP_PORT = Number(process.env.KESTREL_NOTES_DEV_PORT || 1437);
+const NOTES_START_HINT = 'start: cargo run -p kestrel-notes --example dev_http';
+const NOTES_COMMANDS = [
+  'notes_index_status',
+  'notes_index_update',
+  'notes_index_drop',
+  'notes_cancel',
+  'notes_graph',
+  'notes_resolve',
+];
+
+/** Sends one command to the dev_http server. No timeout: an index build can take long. */
+function forwardNotes(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(args ?? {}), 'utf8');
+    const req = http.request(
+      {
+        host: NOTES_HTTP_HOST,
+        port: NOTES_HTTP_PORT,
+        path: `/invoke/${cmd}`,
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': body.length },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (d) => chunks.push(d));
+        res.on('error', (e) => reject(new KError('internal', `notes dev_http: ${e.message}`)));
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            return reject(new KError('internal', `notes dev_http sent an answer that is not JSON (status ${res.statusCode})`));
+          }
+          if (res.statusCode === 200) return resolve(json);
+          reject(new KError(String(json?.code ?? 'internal'), String(json?.message ?? `notes dev_http status ${res.statusCode}`)));
+        });
+      },
+    );
+    req.on('error', (e) => {
+      if (e?.code === 'ECONNREFUSED' || e?.code === 'ECONNRESET' || e?.code === 'EHOSTUNREACH') {
+        return reject(new KError('internal', NOTES_START_HINT));
+      }
+      reject(new KError('internal', `notes dev_http: ${e?.message ?? e}`));
+    });
+    req.end(body);
+  });
+}
+
+const notesCommands = Object.fromEntries(NOTES_COMMANDS.map((cmd) => [cmd, (args) => forwardNotes(cmd, args)]));
+Object.assign(commands, notesCommands);

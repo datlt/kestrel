@@ -2415,6 +2415,7 @@ dependencies = [
  "kestrel-git",
  "kestrel-lsp",
  "kestrel-markdown",
+ "kestrel-notes",
  "kestrel-search",
  "kestrel-term",
  "log",
@@ -2547,6 +2548,23 @@ dependencies = [
  "mime_guess",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "kestrel-notes"
+version = "0.1.0"
+dependencies = [
+ "ignore",
+ "kestrel-common",
+ "kestrel-markdown",
+ "log",
+ "memchr",
+ "parking_lot",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "unicode-normalization",
 ]
 
 [[package]]

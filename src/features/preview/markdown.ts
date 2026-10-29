@@ -7,9 +7,11 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { h } from '../../core/dom';
 import type { AppContext, FileEditor, PreviewInstance } from '../../core/types';
 import { dirname, escapeHtml, extname, rafThrottle } from '../../core/util';
+import { fsStat } from '../../ipc/fs';
 import { mdRender, pathFromPreviewUrl, previewDirUrl } from '../../ipc/preview';
 import { animate, forwardKeys, nextZoom, themeCss, wheelZoomStepper } from './frame';
 import { MARKDOWN_CSS } from './markdown-css';
+import { NoteLinks } from './wikilinks';
 import './preview.css';
 
 const BLOCKS = 'p,h1,h2,h3,h4,h5,h6,pre,li,blockquote,table,tr,hr,dl,details,div.markdown-alert'
@@ -49,6 +51,7 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
   iframe.srcdoc = buildDoc(isFile ? previewDirUrl(dirname(editor.path)) : null, ctx);
 
   let disposed = false;
+  const links = new NoteLinks(ctx, editor.path);
   let doc: Document | null = null;
   let article: HTMLElement | null = null;
   let lastHtml = '';
@@ -163,17 +166,27 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     const href = a.getAttribute('href');
     if (href == null) return;
     e.preventDefault();
-    if (href.startsWith('#')) {
+    const background = e.metaKey || e.ctrlKey;
+    if (a.dataset.wikilink) {
+      void links.open(href, true, background).catch((err) => ctx.ui.notify(`Cannot open link: ${err}`, { kind: 'error' }));
+    } else if (href.startsWith('#')) {
       scrollToAnchor(href.slice(1));
     } else if (/^(https?|mailto):/i.test(href)) {
       openUrl(href).catch((err) => ctx.ui.notify(`Cannot open link: ${err}`, { kind: 'error' }));
     } else {
       const path = pathFromPreviewUrl(a.href);
       if (!path) return;
-      const ext = extname(path);
-      if (ext === '.md' || ext === '.markdown') void ctx.editors.openFile(path, { mode: 'preview' });
-      else void ctx.editors.openFile(path);
+      void openPathLink(path, href, background);
     }
+  }
+
+  /** A relative link: the file when it exists, else the note index resolves it (`[x](Note)`, links by name). */
+  async function openPathLink(path: string, href: string, background: boolean): Promise<void> {
+    const st = await fsStat(path).catch(() => null);
+    if (!st?.exists && (await links.open(href, false, background).catch(() => false))) return;
+    const ext = extname(path);
+    const markdown = ext === '.md' || ext === '.markdown' || ext === '.mdx';
+    void ctx.editors.openFile(path, { mode: markdown ? 'preview' : undefined, activate: !background });
   }
 
   // --- Rendering ---------------------------------------------------------
@@ -214,6 +227,10 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
     hasContent = true;
     rebuildIndex();
     highlightBlocks(renderSeq);
+    if (isFile) {
+      const seq = renderSeq;
+      void links.decorate(article, () => !disposed && seq === renderSeq);
+    }
     if (pendingLine != null) {
       scrollToLine(pendingLine);
       pendingLine = null;
@@ -345,6 +362,7 @@ export function createMarkdownPreview(ctx: AppContext, host: HTMLElement, editor
       disposed = true;
       stopZoom?.();
       sub.dispose();
+      links.dispose();
       iframe.removeEventListener('load', onLoad);
       iframe.remove();
     },

@@ -61,7 +61,13 @@ the whole picture, and quick when you go down to the exact line.
 - **Syntax colors** for Kotlin, Java, Swift, JavaScript, TypeScript, Python,
   HTML, CSS, SQL, JSON, Markdown, XML, YAML, Rust, Go, C++, Groovy and more.
 - **Viewers.** Markdown and HTML preview (code, split or preview mode), CSV and
-  TSV as a sortable table, images.
+  TSV as a sortable table, images. CSV and TSV files up to 256 MB keep the
+  table and the column colors: the table shows the first rows at once and
+  reads the rest in a worker.
+- **Graph View** of the markdown files (Mod-Alt-g) like Obsidian, and the
+  folder tree stays in it: folder nodes and outlines, or a radial or tree
+  layout of the folders. Wiki links (`[[note]]`) work in the markdown
+  preview. See [Graph View](#graph-view).
 - **Git.** Changes view, side-by-side and unified diff, compare with any branch,
   file history, blame, and changed lines in the editor gutter. Switch or create
   a branch in two key presses (Mod-Shift-b); Kestrel offers to stash your
@@ -371,6 +377,52 @@ between them.
   hides test code.
 - With an empty query you see the classes and files that you opened last.
 
+## Graph View
+
+The Graph View shows the markdown files (`.md`, `.markdown`, `.mdx`) of the
+open folder and the links between them, like the graph of Obsidian. The
+folders stay in the picture, so you see both the links and where each note
+lives.
+
+- **Open it**: Mod-Alt-g (whole folder), Mod-Shift-Alt-g (Local Graph of the
+  active note; it follows the note you open), or right-click in the explorer:
+  "Show Graph for Folder" on a folder, "Show Local Graph" on a markdown file.
+- **Links**: `[[Note]]`, `[[Note|text]]`, `[[Note#Heading]]`, embeds
+  `![[image.png]]`, and normal markdown links `[text](path/to/note.md)`. A
+  link without a folder finds the note by its name, like Obsidian: the note in
+  the same folder first, then the nearest one. Links in code blocks do not
+  count. Links to notes that do not exist show as hollow circles; click one
+  to create the note.
+- **Layouts**:
+  - **Force**: the free layout of Obsidian. Folders are square nodes, each
+    note hangs on its folder, and an outline in the folder color surrounds
+    the notes of each folder (nested like the folders). "Folder pull" in the
+    settings keeps the notes of a folder closer together.
+  - **Radial**: the folder tree as circles, notes on the outer circle, links
+    bent along the tree (edge bundling).
+  - **Tree**: the folder tree from left to right, like the explorer.
+- **Folders panel** (left button in the toolbar): the folder tree with the
+  note count. The eye button hides a folder; the collapse button turns a
+  folder into one node, so you see the links between folders. Double-click a
+  folder node does the same.
+- **Settings panel** (gear button), like Obsidian: filters (tags,
+  attachments, existing files only, orphans), color groups, display (arrows,
+  labels, text fade, node size, link thickness), forces, folders (color by
+  folder or tag, color depth) and the Local Graph depth and directions.
+- **Search** field: words match the file path. Also `"exact words"`,
+  `-word` to leave out, `OR`, `( )`, `path:docs/api`, `file:Auth`,
+  `tag:#api`, `title:` and `/regex/`.
+- **Mouse**: hover a note to light up its links, click to open it,
+  Mod-click to open it in the background, drag a node, right-click for more.
+- **Markdown preview**: wiki links are links. A click opens the note at the
+  heading; a link to a note that does not exist asks to create it. Embedded
+  images (`![[logo.png]]`) show as images.
+
+Kestrel skips folders whose names start with a dot (`.git`, `.obsidian`,
+`.github` ...), `node_modules`, build output and files in `.gitignore`. The
+graph keeps at most 20,000 notes. The Rust index reads 10,000 notes in about
+0.4 s and updates when files change.
+
 ## GitHub pull requests
 
 Kestrel uses the GitHub CLI. It never sees your token: `gh` keeps it in the
@@ -571,6 +623,7 @@ Main settings:
 | Find usages, next or previous usage | Alt-F7, F4, Shift-F4 |
 | Class diagram of the type at the cursor | Mod-Alt-u |
 | Call hierarchy of the method at the cursor | Mod-Shift-h |
+| Graph View, Local Graph of the active note | Mod-Alt-g, Mod-Shift-Alt-g |
 | Switch branch | Mod-Shift-b (or click the branch in the status bar) |
 | Rename symbol | F2 |
 | Format document | Shift-Alt-f |
@@ -649,6 +702,8 @@ On macOS they use about 100 MB more.
   finish the login in the browser later, Kestrel closes that session.
 - Copy as INSERT uses MySQL backticks, also for Trino results.
 - There is no debugger and no extension system.
+- The markdown preview shows embedded notes (`![[note]]`) as links, not as
+  the text of the note.
 - Web tabs are native web views over the editor. While a page has the focus,
   macOS sends Cmd shortcuts to the page, so click outside the page first.
   Web tabs are not tested on Windows and Linux yet.

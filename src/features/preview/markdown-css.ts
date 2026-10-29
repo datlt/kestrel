@@ -12,6 +12,8 @@ body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:var(--f
 #md>*:first-child{margin-top:0;}
 #md a{color:var(--accent);text-decoration:none;}
 #md a:hover{text-decoration:underline;}
+#md a.wikilink-missing{opacity:.65;text-decoration:underline dashed;}
+#md .wikilink-embed > a::before{content:'\\21AA  ';}
 #md a.anchor{display:inline-block;width:0;height:0;overflow:hidden;}
 #md h1,#md h2,#md h3,#md h4,#md h5,#md h6{margin:24px 0 16px;font-weight:600;line-height:1.25;}
 #md h1{font-size:2em;padding-bottom:.3em;border-bottom:1px solid var(--border);}

@@ -14,6 +14,7 @@
 //! | `term_`               | `term.rs`     |
 //! | `code_`               | `code.rs`     |
 //! | `gh_`                 | `gh.rs`       |
+//! | `notes_`              | `notes.rs`    |
 //!
 //! Every feature module must export: `handler()`, `setup()`,
 //! `on_window_destroyed()` and `on_exit()`.
@@ -25,6 +26,7 @@ pub mod gh;
 pub mod fs;
 pub mod git;
 pub mod lsp;
+pub mod notes;
 pub mod preview;
 pub mod search;
 pub mod term;
@@ -48,6 +50,7 @@ pub struct Handlers {
     term: Handler,
     code: Handler,
     gh: Handler,
+    notes: Handler,
 }
 
 impl Handlers {
@@ -64,6 +67,7 @@ impl Handlers {
             term: term::handler(),
             code: code::handler(),
             gh: gh::handler(),
+            notes: notes::handler(),
         }
     }
 
@@ -82,6 +86,7 @@ impl Handlers {
             "term" => &self.term,
             "code" => &self.code,
             "gh" => &self.gh,
+            "notes" => &self.notes,
             _ => {
                 let msg = format!("unknown command: {name}");
                 invoke.resolver.reject(msg);
@@ -104,6 +109,7 @@ pub fn setup(app: &mut App) -> SetupResult {
     term::setup(app)?;
     code::setup(app)?;
     gh::setup(app)?;
+    notes::setup(app)?;
     Ok(())
 }
 
@@ -118,6 +124,7 @@ pub fn on_window_destroyed(app: &AppHandle, label: &str) {
     term::on_window_destroyed(app, label);
     code::on_window_destroyed(app, label);
     gh::on_window_destroyed(app, label);
+    notes::on_window_destroyed(app, label);
 }
 
 pub fn on_exit(app: &AppHandle) {
@@ -131,4 +138,5 @@ pub fn on_exit(app: &AppHandle) {
     term::on_exit(app);
     code::on_exit(app);
     gh::on_exit(app);
+    notes::on_exit(app);
 }

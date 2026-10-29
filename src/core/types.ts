@@ -473,7 +473,10 @@ export interface FileMeta {
   mtimeMs: number;
   size: number;
   readonly: boolean;
-  /** Bigger than `editor.largeFileMB`: plain mode. */
+  /**
+   * Bigger than `editor.largeFileMB`: plain mode. Only previews and extension
+   * providers that set `largeFiles` still run (see `PreviewProvider.largeFiles`).
+   */
   large: boolean;
 }
 
@@ -518,8 +521,16 @@ export interface FileEditor {
 /**
  * Adds CodeMirror extensions to file editors (git gutter, LSP, ...).
  * Called once per file editor that is not in large-file mode. Return null to skip.
+ * Large files (`FileMeta.large`) only get providers that were registered with
+ * `{ largeFiles: true }`. Do that only when the extension stays fast on a file of
+ * 256 MB (no work on the whole document, only on the visible lines).
  */
 export type EditorExtensionProvider = (editor: FileEditor) => Extension | null | Promise<Extension | null>;
+
+export interface ExtensionOptions {
+  /** Also run for large files (`FileMeta.large`). Default false. */
+  largeFiles?: boolean;
+}
 
 export interface PreviewInstance {
   /** New text. The engine calls it once at start, then debounced (about 150 ms) after edits. */
@@ -533,6 +544,12 @@ export interface PreviewInstance {
 export interface PreviewProvider {
   id: string;
   matches(path: string, languageId: string): boolean;
+  /**
+   * True when the preview also works for large files (`FileMeta.large`). Other
+   * previews are off for large files. Set it only when the preview copes with
+   * a file of 256 MB: it must not build the whole page at once.
+   */
+  largeFiles?: boolean;
   /** Mode to use when the file opens and the caller gave no mode. */
   defaultMode(path: string): ViewMode;
   /**
@@ -567,7 +584,7 @@ export interface EditorService {
    * come back after a restart. "Save As" moves a draft to a real place.
    */
   newDraft(): Promise<FileEditor | null>;
-  registerExtension(provider: EditorExtensionProvider): Disposable;
+  registerExtension(provider: EditorExtensionProvider, opts?: ExtensionOptions): Disposable;
   registerPreview(provider: PreviewProvider): Disposable;
   registerOpener(opener: FileOpener): Disposable;
   /**
